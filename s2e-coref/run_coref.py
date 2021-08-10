@@ -7,6 +7,7 @@ import git
 import torch
 
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, RobertaConfig
+from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel
 
 from modeling import S2E
 from data import get_dataset
@@ -106,13 +107,38 @@ def main():
                                 cache_dir=args.cache_dir,
                                 args=args)
 
-    additional_tokens  = ['<'+chr(i) for i in range(ord('A'), ord('z') + 1)]
-    additional_tokens += [chr(i)+'>' for i in range(ord('A'), ord('z') + 1)]
+    N = 10
+    additional_tokens  = [(f"<{i}", f"{i}>") for i in range(N)]
+    additional_tokens  = [ p for t in additional_tokens for p in t ]
     additional_tokens += ['<final>']
 
-    tokenizer.add_special_tokens({'additional_special_tokens' : additional_tokens})
     model.resize_token_embeddings(len(tokenizer))
 
+    print("tokenizer: {}".format(len(tokenizer)))
+    tokenizer.add_special_tokens({'additional_special_tokens' : additional_tokens})
+
+    encoder = BertGenerationEncoder.from_pretrained("bert-large-uncased")
+    decoder = BertGenerationDecoder.from_pretrained("bert-large-uncased", add_cross_attention=True, is_decoder=True)
+    print("encoder: {}".format(str(encoder.get_input_embeddings())))
+    print("decoder: {}".format(str(decoder.get_input_embeddings())))
+
+    encoder.resize_token_embeddings(len(tokenizer))
+    decoder.resize_token_embeddings(len(tokenizer))
+    bert2bert = EncoderDecoderModel(encoder=encoder, decoder=decoder)
+    print("tokenizer: {}".format(len(tokenizer)))
+    print("encoder: {}".format(str(encoder.get_input_embeddings())))
+    print("decoder: {}".format(str(decoder.get_input_embeddings())))
+    print("bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
+
+    input_ids = tokenizer('This is a long article to summarize', add_special_tokens=True, return_tensors="pt").input_ids
+    labels = tokenizer('<0This0> is <0a long article to summarize0>', return_tensors="pt").input_ids
+
+    # train...
+    loss = bert2bert(input_ids=input_ids, decoder_input_ids=labels, labels=labels)
+    loss[0].backward()
+
+    print(encoder.get_input_embeddings())
+    print(decoder.get_input_embeddings())
     model.to(args.device)
 
     if args.local_rank == 0:
