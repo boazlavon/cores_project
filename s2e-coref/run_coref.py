@@ -106,6 +106,13 @@ def main():
                                 cache_dir=args.cache_dir,
                                 args=args)
 
+    additional_tokens  = ['<'+chr(i) for i in range(ord('A'), ord('z') + 1)]
+    additional_tokens += [chr(i)+'>' for i in range(ord('A'), ord('z') + 1)]
+    additional_tokens += ['<final>']
+
+    tokenizer.add_special_tokens({'additional_special_tokens' : additional_tokens})
+    model.resize_token_embeddings(len(tokenizer))
+
     model.to(args.device)
 
     if args.local_rank == 0:
