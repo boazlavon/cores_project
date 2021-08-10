@@ -1,4 +1,4 @@
-export COREF_DIR="/home/yandex/AMNLP2021/boazlavon/coref_repos/s2e-coref"
+export COREF_DIR="/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref"
 export OUTPUT_DIR="$COREF_DIR/output_$(date +%s)"
 export CACHE_DIR="$COREF_DIR/cache"
 export MODEL_DIR="$COREF_DIR/model"
