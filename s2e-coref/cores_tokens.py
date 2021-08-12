@@ -36,7 +36,6 @@ def encode(sentence, clusters, cluster_tag=None):
 def decode(sentence):
     delete_indexes = []
     sentence = sentence.split(' ')
-    import ipdb; ipdb.set_trace()
     for word_index, word in enumerate(sentence):
         if (STARTING_TOKEN == word.strip()) and (word_index < len(sentence) - 1):
             sentence[word_index] = ''
@@ -61,23 +60,26 @@ def decode(sentence):
     end_tokens += [(i, ENDING_TOKEN, False) for i,w in enumerate(sentence) if ENDING_TOKEN in w and NOT_IN_CLUSTER_TOKEN in w]
     spanning_tokens = start_tokens + end_tokens 
     spanning_tokens.sort(key=lambda x:x[0])
-    missing_endings = []
-    mentions_stack = []
+    missing_tokens = []
     mentions = []
-    for i, tok, c_tag in spanning_tokens:
-        if STARTING_TOKEN == tok:
-            mentions_stack.append((i, tok, c_tag))
-        if ENDING_TOKEN == tok:
-            if mentions_stack:
-                s_i, _ , _ = mentions_stack.pop() 
-                mentions.append(((s_i, i), c_tag))
-            else:
-                missing_endings.append((i, tok, c_tag))
 
-    missing_tokens = mentions_stack + missing_endings
-    missing_tokens.sort(key=lambda x:x[0])
-    clusters = { True : [], False : [] }
-    textual_clusters = { True : [], False : [] }
+    i = 0
+    while i  < len(spanning_tokens):
+        tok_i, tok, tok_c_tag = spanning_tokens[i]
+
+        if STARTING_TOKEN == tok and i < len(spanning_tokens) - 1:
+            next_tok_i, next_tok, next_tok_c_tag = spanning_tokens[i + 1]
+            if ENDING_TOKEN == next_tok:
+                mentions.append(((tok_i, next_tok_i), next_tok_c_tag))
+                i += 2
+                continue
+
+        missing_tokens.append(spanning_tokens[i])
+        i += 1
+
+    textual_missing_tokens = [ sentence[i] for i, _, _ in missing_tokens]
+    clusters = { True : [], False : [] , None: []}
+    textual_clusters = { True : [], False : [] , None : []}
     textual_mentions = []
     for m, c_tag in mentions:
         textual_mention = ' '.join(sentence[m[0] : m[1] + 1])
@@ -87,12 +89,18 @@ def decode(sentence):
         clusters[c_tag].append(m) 
         textual_mentions.append(textual_mention) 
         textual_clusters[c_tag].append(textual_mention) 
+
+    for index, _ in enumerate(sentence):
+        for tok in [STARTING_TOKEN, ENDING_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN]:
+            sentence[index] = sentence[index].replace(tok, '')
+    sentence = ' '.join(sentence)
     decode_results = { 
                        'sentence' : sentence, 
                        'mentions' : mentions, 
-                       'missing_tokens' : missing_tokens,
-                       'clusters' : clusters,
                        'textual_mentions' : textual_mentions,
+                       'missing_tokens' : missing_tokens,
+                       'textual_missing_tokens' : textual_missing_tokens,
+                       'clusters' : clusters,
                        'textual_clusters' : textual_clusters
                      }
     return decode_results
@@ -117,4 +125,33 @@ for c_i, c in enumerate(C):
     sentence_list, sentence = encode(W,C,c_i)
     print(sentence)
     print(str_clusters(sentence_list, C))
+    print()
     d = decode(sentence)
+    s1 = sentence + ' << Hello!'
+    d = decode(s1)
+    print(d['missing_tokens'])
+    print(d['textual_missing_tokens'])
+    print()
+    s2 = sentence + ' Hello! >> [[T]]'
+    d = decode(s2)
+    print(d['missing_tokens'])
+    print(d['textual_missing_tokens'])
+    print()
+    s3 = sentence + ' << Hello! >>'
+    d = decode(s3)
+    print(d['clusters'])
+    print(d['textual_clusters'])
+    print()
+    s4 = sentence.replace(IN_CLUSTER_TOKEN, '')
+    s4 = s4.replace(NOT_IN_CLUSTER_TOKEN, '')
+    d = decode(s4)
+    print(d['clusters'])
+    print(d['textual_clusters'])
+    print()
+    s5 = sentence.replace(STARTING_TOKEN, '')
+    d = decode(s5)
+    print(d['missing_tokens'])
+    print(d['textual_missing_tokens'])
+    print(d['clusters'])
+    print(d['textual_clusters'])
+    print()
