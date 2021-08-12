@@ -3,13 +3,15 @@ import logging
 import os
 
 import torch
+
 STARTING_TOKEN = '<<'
 ENDING_TOKEN = '>>'
+UNK_CLUSTER_TOKEN = '[[U]]'
 IN_CLUSTER_TOKEN = '[[T]]'
 NOT_IN_CLUSTER_TOKEN = '[[F]]'
 def get_cores_tokens():
     cores_tokens  = [STARTING_TOKEN, ENDING_TOKEN] # starting ending of a mention
-    cores_tokens += [IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN] # whether mentino is inside the cluster or not. TODO: with and without F token
+    cores_tokens += [UNK_CLUSTER_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN] # whether mentino is inside the cluster or not. TODO: with and without F token
     # I will tag the color after the ending token. therefore the decoder can context everything it saw. all the previous taggings and mentions the all the current mention and decide about the color.
     return cores_tokens
 
@@ -25,7 +27,9 @@ def encode(sentence, clusters, cluster_tag=None):
                 sentence[mention[0]] = STARTING_TOKEN + ' ' + sentence[mention[0]]
             if ENDING_TOKEN not in W[mention[1]]:
                 sentence[mention[1]] =  sentence[mention[1]] + ' ' + ENDING_TOKEN
-                if cluster_tag is not None:
+                if cluster_tag is None:
+                    sentence[mention[1]] += ' ' + UNK_CLUSTER_TOKEN
+                else:
                     if cluster_index == cluster_tag:
                         sentence[mention[1]] += ' ' + IN_CLUSTER_TOKEN
                     else:
@@ -52,12 +56,19 @@ def decode(sentence):
         if (NOT_IN_CLUSTER_TOKEN == word.strip()) and (word_index > 0):
             sentence[word_index] = ''
             sentence[word_index - 1] = sentence[word_index - 1] + ' ' + NOT_IN_CLUSTER_TOKEN
+        if (UNK_CLUSTER_TOKEN == word.strip()) and (word_index > 0):
+            sentence[word_index] = ''
+            sentence[word_index - 1] = sentence[word_index - 1] + ' ' + UNK_CLUSTER_TOKEN
     sentence = [w for w in sentence if w]
 
     start_tokens = [(i, STARTING_TOKEN, None) for i,w in enumerate(sentence) if STARTING_TOKEN in w]
-    end_tokens = [(i, ENDING_TOKEN, None) for i,w in enumerate(sentence) if ENDING_TOKEN in w and IN_CLUSTER_TOKEN not in w and NOT_IN_CLUSTER_TOKEN not in w]
-    end_tokens += [(i, ENDING_TOKEN, True) for i,w in enumerate(sentence) if ENDING_TOKEN in w and IN_CLUSTER_TOKEN in w]
+    end_tokens  = [(i, ENDING_TOKEN, True) for i,w in enumerate(sentence) if ENDING_TOKEN in w and IN_CLUSTER_TOKEN in w]
     end_tokens += [(i, ENDING_TOKEN, False) for i,w in enumerate(sentence) if ENDING_TOKEN in w and NOT_IN_CLUSTER_TOKEN in w]
+    end_tokens += [(i, ENDING_TOKEN, 'UNK') for i,w in enumerate(sentence) if ENDING_TOKEN in w and UNK_CLUSTER_TOKEN in w]
+    end_tokens += [(i, ENDING_TOKEN, None) for i,w in enumerate(sentence) if ENDING_TOKEN in w \
+			and IN_CLUSTER_TOKEN not in w \
+			and NOT_IN_CLUSTER_TOKEN not in w \
+			and UNK_CLUSTER_TOKEN not in w]
     spanning_tokens = start_tokens + end_tokens 
     spanning_tokens.sort(key=lambda x:x[0])
     missing_tokens = []
@@ -78,12 +89,12 @@ def decode(sentence):
         i += 1
 
     textual_missing_tokens = [ sentence[i] for i, _, _ in missing_tokens]
-    clusters = { True : [], False : [] , None: []}
-    textual_clusters = { True : [], False : [] , None : []}
+    clusters = { True : [], False : [], 'UNK': [], None: []}
+    textual_clusters = { True : [], False : [], 'UNK': [],  None : []}
     textual_mentions = []
     for m, c_tag in mentions:
         textual_mention = ' '.join(sentence[m[0] : m[1] + 1])
-        for tok in [STARTING_TOKEN, ENDING_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN]:
+        for tok in [STARTING_TOKEN, ENDING_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN, UNK_CLUSTER_TOKEN]:
             textual_mention = textual_mention.replace(tok, '')
         textual_mention = "".join(textual_mention.rstrip().lstrip())
         clusters[c_tag].append(m) 
@@ -154,4 +165,11 @@ for c_i, c in enumerate(C):
     print(d['textual_missing_tokens'])
     print(d['clusters'])
     print(d['textual_clusters'])
-    print()
+
+_, s6= encode(W,C, None)
+d = decode(s6)
+print(d['missing_tokens'])
+print(d['textual_missing_tokens'])
+print(d['clusters'])
+print(d['textual_clusters'])
+print()
