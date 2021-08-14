@@ -6,7 +6,7 @@ import shutil
 import git
 import torch
 
-from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig
+from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
 
 from modeling import S2E
@@ -88,15 +88,18 @@ def main():
 
     cores_tokens = get_cores_tokens()
     logger.info(cores_tokens)
-    if args.tokenizer_name:
+    if args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+        logger.info("Loading pre-trained tokenizer")
+        tokenizer_path = os.path.join(args.model_name_or_path, 'tokenizer')
+        tokenizer = BertTokenizer.from_pretrained(tokenizer_path, cache_dir=args.cache_dir)
+        logger.info("pre-trained: tokenizer: {}".format(len(tokenizer)))
+    elif args.tokenizer_name:
+        logger.info("Building new tokenizer")
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-        logger.info("before: tokenizer: {}".format(len(tokenizer)))
+        logger.info("tokenizer: {}".format(len(tokenizer)))
         tokenizer.add_special_tokens({'additional_special_tokens' : cores_tokens})
-        logger.info("after: tokenizer: {}".format(len(tokenizer)))
-    #elif args.model_name_or_path and os.path.isdir(args.model_name_or_path):
-    #    tokenizer_path = os.path.join(args.model_name_or_path, 'tokenizer')
-    #    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, cache_dir=args.cache_dir)
-    #    logger.info("pre-trained: tokenizer: {}".format(len(tokenizer)))
+        logger.info("add special tokens: {}".format(str({'additional_special_tokens' : cores_tokens})))
+        logger.info("tokenizer: {}".format(len(tokenizer)))
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
@@ -104,32 +107,42 @@ def main():
         )
 
     if args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+        logger.info("Loading pre-trained bert2bert model")
         model_path = os.path.join(args.model_name_or_path, 'model')
         bert2bert = EncoderDecoderModel.from_pretrained(model_path)
         print("pre-trained bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
     else:
+        logger.info("Building new bert2bert model")
+        logger.info("Building BERT Encoder")
         encoder = BertGenerationEncoder.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+        logger.info("Buuilding BERT Decoder")
         decoder = BertGenerationDecoder.from_pretrained(args.config_name, add_cross_attention=True, is_decoder=True, cache_dir=args.cache_dir)
         # VERY IMPORTANT STEP!
+        logger.info("resize token embeddings")
         encoder.resize_token_embeddings(len(tokenizer))
         decoder.resize_token_embeddings(len(tokenizer))
+        logger.info("Building BERT to BERT model")
         bert2bert = EncoderDecoderModel(encoder=encoder, decoder=decoder)
         print("new bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
     bert2bert.to(args.device)
 
     if True:
+        logger.info("Running Training Example")
         input_example = ' '.join(W)
         _, output_example = encode(W,C,None)
     
         input_ids = tokenizer(input_example, add_special_tokens=True, return_tensors="pt").input_ids.to(args.device)
+        logger.info("Input: str: {}\n IDs: {}".format(input_example, str(input_ids)))
         output_ids = tokenizer(output_example, return_tensors="pt").input_ids.to(args.device)
+        logger.info("Output: str: {}\n IDs: {}".format(output_example, str(output_ids)))
 
         # train...
         loss = bert2bert(input_ids=input_ids, decoder_input_ids=output_ids, labels=output_ids)
+        logger.info("Loss: {}".format(str(loss)))
         loss[0].backward()
+        logger.info("Loss[0]: Backward... ")
 
     logger.info("Exit")
-    import ipdb; ipdb.set_trace()
     exit(0)
     if args.local_rank == 0:
         # End of barrier to make sure only the first process in distributed training download model & vocab
