@@ -6,20 +6,18 @@ import shutil
 import git
 import torch
 
-from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, RobertaConfig
-from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel
+from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig
+from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
 
 from modeling import S2E
 from data import get_dataset
-from cores_tokens import get_cores_tokens
-from cli import parse_args
+from cores_tokens import get_cores_tokens, encode, W, C
+from bert2bert_cli import parse_args
 from training import train, set_seed
 from eval import Evaluator
 from utils import write_meta_data
 
 logger = logging.getLogger(__name__)
-
-
 def main():
     args = parse_args()
 
@@ -88,47 +86,51 @@ def main():
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
 
+    cores_tokens = get_cores_tokens()
+    logger.info(cores_tokens)
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        logger.info("before: tokenizer: {}".format(len(tokenizer)))
+        tokenizer.add_special_tokens({'additional_special_tokens' : cores_tokens})
+        logger.info("after: tokenizer: {}".format(len(tokenizer)))
+    #elif args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+    #    tokenizer_path = os.path.join(args.model_name_or_path, 'tokenizer')
+    #    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, cache_dir=args.cache_dir)
+    #    logger.info("pre-trained: tokenizer: {}".format(len(tokenizer)))
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
             "and load it from here, using --tokenizer_name"
         )
 
-    # TODO: from pre-trained logic
-    encoder = BertGenerationEncoder.from_pretrained("bert-large-uncased")
-    decoder = BertGenerationDecoder.from_pretrained("bert-large-uncased", add_cross_attention=True, is_decoder=True)
-
-    cores_tokens = get_cores_tokens()
-
-    print("Before CORES tokens")
-    print("tokenizer: {}".format(len(tokenizer)))
-    tokenizer.add_special_tokens({'additional_special_tokens' : cores_tokens})
-
-    print("encoder: {}".format(str(encoder.get_input_embeddings())))
-    print("decoder: {}".format(str(decoder.get_input_embeddings())))
-
-    encoder.resize_token_embeddings(len(tokenizer))
-    decoder.resize_token_embeddings(len(tokenizer))
-    bert2bert = EncoderDecoderModel(encoder=encoder, decoder=decoder)
+    if args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+        model_path = os.path.join(args.model_name_or_path, 'model')
+        bert2bert = EncoderDecoderModel.from_pretrained(model_path)
+        print("pre-trained bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
+    else:
+        encoder = BertGenerationEncoder.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+        decoder = BertGenerationDecoder.from_pretrained(args.config_name, add_cross_attention=True, is_decoder=True, cache_dir=args.cache_dir)
+        # VERY IMPORTANT STEP!
+        encoder.resize_token_embeddings(len(tokenizer))
+        decoder.resize_token_embeddings(len(tokenizer))
+        bert2bert = EncoderDecoderModel(encoder=encoder, decoder=decoder)
+        print("new bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
     bert2bert.to(args.device)
 
-    print("After CORES tokens")
-    print("tokenizer: {}".format(len(tokenizer)))
-    print("encoder: {}".format(str(encoder.get_input_embeddings())))
-    print("decoder: {}".format(str(decoder.get_input_embeddings())))
-    print("bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
+    if True:
+        input_example = ' '.join(W)
+        _, output_example = encode(W,C,None)
+    
+        input_ids = tokenizer(input_example, add_special_tokens=True, return_tensors="pt").input_ids.to(args.device)
+        output_ids = tokenizer(output_example, return_tensors="pt").input_ids.to(args.device)
 
-    input_ids = tokenizer('This is a long article to summarize', add_special_tokens=True, return_tensors="pt").input_ids.to(args.device)
-    labels = tokenizer('<<This[[T]]>> is <<a long article to summarize[[T]]>>', return_tensors="pt").input_ids.to(args.device)
+        # train...
+        loss = bert2bert(input_ids=input_ids, decoder_input_ids=output_ids, labels=output_ids)
+        loss[0].backward()
 
-    # train...
-    loss = bert2bert(input_ids=input_ids, decoder_input_ids=labels, labels=labels)
-    loss[0].backward()
-
+    logger.info("Exit")
+    import ipdb; ipdb.set_trace()
+    exit(0)
     if args.local_rank == 0:
         # End of barrier to make sure only the first process in distributed training download model & vocab
         torch.distributed.barrier()

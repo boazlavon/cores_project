@@ -9,7 +9,6 @@ python run_bert2bert_coref.py \
         --output_dir=$OUTPUT_DIR \
         --overwrite_output_dir \
         --cache_dir=$CACHE_DIR \
-        --model_type=bert-large-uncased \
         --model_name_or_path=$MODEL_DIR \
         --tokenizer_name=bert-large-uncased \
         --config_name=bert-large-uncased  \
