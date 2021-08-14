@@ -141,6 +141,12 @@ def main():
         logger.info("Loss: {}".format(str(loss)))
         loss[0].backward()
         logger.info("Loss[0]: Backward... ")
+        
+        logger.info("Generate...")
+        mask = torch.ones(input_ids.shape).to(args.device)
+        outputs = bert2bert.generate(input_ids, attention_mask=mask)
+        output_str = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        logger.info("Output: str: {}\n IDs: {}".format(output_str, str(outputs)))
 
     logger.info("Exit")
     exit(0)
