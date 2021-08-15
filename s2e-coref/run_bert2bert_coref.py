@@ -11,7 +11,7 @@ from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenera
 
 from modeling import S2E
 from data import get_dataset
-from cores_tokens import get_cores_tokens, encode, W, C
+from cores_tokens import get_cores_tokens
 from bert2bert_cli import parse_args
 from training import train, set_seed
 from eval import Evaluator
@@ -88,18 +88,20 @@ def main():
 
     cores_tokens = get_cores_tokens()
     logger.info(cores_tokens)
-    if args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+    tokenizer_path = os.path.join(args.model_name_or_path, 'tokenizer')
+    if args.model_name_or_path and os.path.isdir(tokenizer_path):
         logger.info("Loading pre-trained tokenizer")
-        tokenizer_path = os.path.join(args.model_name_or_path, 'tokenizer')
         tokenizer = BertTokenizer.from_pretrained(tokenizer_path, cache_dir=args.cache_dir)
         logger.info("pre-trained: tokenizer: {}".format(len(tokenizer)))
     elif args.tokenizer_name:
         logger.info("Building new tokenizer")
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
         logger.info("tokenizer: {}".format(len(tokenizer)))
-        tokenizer.add_special_tokens({'additional_special_tokens' : cores_tokens})
-        logger.info("add special tokens: {}".format(str({'additional_special_tokens' : cores_tokens})))
+        tokenizer.add_tokens(cores_tokens)
+        logger.info("add tokens: {}".format(str(cores_tokens)))
         logger.info("tokenizer: {}".format(len(tokenizer)))
+        tokenizer.model_max_length = 512
+        tokenizer.save_pretrained(tokenizer_path)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
@@ -145,7 +147,7 @@ def main():
         logger.info("Generate...")
         mask = torch.ones(input_ids.shape).to(args.device)
         outputs = bert2bert.generate(input_ids, attention_mask=mask)
-        output_str = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        output_str = tokenizer.batch_decode(outputs, skip_special_tokens=False)
         logger.info("Output: str: {}\n IDs: {}".format(output_str, str(outputs)))
 
     logger.info("Exit")
