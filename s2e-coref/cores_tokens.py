@@ -3,13 +3,14 @@ import logging
 import os
 import pickle
 from collections import namedtuple
+from datasets import Dataset
 
 import torch
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
 from utils import flatten_list_of_lists
-from torch.utils.data import Dataset
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
 
@@ -143,15 +144,18 @@ def str_clusters(sentence, clusters):
     return sentence_clusters
 
 
-CondCoresExample = namedtuple("CondCoresExample", ["input_ids", "input_attention_mask", "output_ids"])
-class CondCoresDataset(Dataset):
-    def __init__(self, file_path, tokenizer, mentions_or_clusters, max_seq_length=-1, model=None):
-        self.mentions_examples = []
-        self.mentions_df = None
-        self.clusters_examples = []
-        self.clusters_df = None
+#CondCoresExample = namedtuple("CondCoresExample", ["input_ids", "input_attention_mask", "output_ids"])
+class CondCoresDatasetBuilder(object):
+    def __init__(self, file_path, tokenizer, max_seq_length=-1, model=None, batch_size=10, val_size=0.2):
+        self.mention_examples = []
+        self.cluster_examples = []
+        self.mention_dataset = None
+        self.cluster_dataset= None
+        self.mention_df = None
+        self.cluster_df= None
+        self.batch_size = batch_size
+        self.val_size = val_size
 
-        self.mentions_or_clusters = mentions_or_clusters
         self.device = torch.device('cuda')
         if model is not None:
             self.model = model.to(self.device)
@@ -159,19 +163,63 @@ class CondCoresDataset(Dataset):
         print(f"Reading dataset from {file_path}")
         examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
         self.max_seq_length = max_seq_length
-        if self.mentions_or_clusters == 'mentions':
-            self.examples, self.num_examples_filtered = self._entity_mention_tokenize(examples)
-        elif self.mentions_or_clusters == 'clusters':
-            self.examples, self.num_examples_filtered = self._binary_clustering_tokenize(examples)
-        else:
-            raise ValueError("Must choose mentions/clusters for mentions_or_clusters")
+        self.num_mention_examples_filtered = self._entity_mention_tokenize(examples)
         print(
-            f"Finished preprocessing Coref dataset. {len(self.examples)} examples were extracted, {self.num_examples_filtered} were filtered due to sequence length.")
-        self._to_pandas()
+            f"Finished preprocessing Entity-Mentions dataset. {len(self.mention_examples)} examples were extracted, {self.num_mention_examples_filtered} were filtered due to sequence length.")
+        self.num_cluster_examples_filtered = self._binary_clustering_tokenize(examples)
+        print(
+            f"Finished preprocessing Clusters dataset. {len(self.cluster_examples)} examples were extracted, {self.num_cluster_examples_filtered} were filtered due to sequence length.")
 
-    def _to_pandas(self):
-        self.mentions_df = pd.DataFrame(self.mentions_examples, columns=['input_str', 'output_str'])
-        self.clusters_df = pd.DataFrame(self.clusters_examples, columns=['input_ids', 'input_mask', 'output_ids'])
+        self._to_dataset()
+
+    @staticmethod
+    def process_data_to_model_inputs(batch):
+        inputs = tokenizer(batch["input_str"],   padding="max_length")
+        outputs = tokenizer(batch["output_str"], padding="max_length")
+
+        batch["input_ids"] = inputs.input_ids
+        batch["attention_mask"] = inputs.attention_mask
+
+        # create 0 global_attention_mask lists
+        batch["global_attention_mask"] = len(batch["input_ids"]) * [
+        [0 for _ in range(len(batch["input_ids"][0]))]
+        ]
+
+        # since above lists are references, the following line changes the 0 index for all samples
+        batch["global_attention_mask"][0][0] = 1
+        batch["labels"] = outputs.input_ids
+
+        # We have to make sure that the PAD token is ignored
+        batch["labels"] = [ [-100 if token == tokenizer.pad_token_id else token for token in labels]
+                            for labels in batch["labels"]
+        ]
+
+        return batch
+
+    def _to_dataset(self):
+        self.mentions_df = pd.DataFrame(self.mention_examples, columns=['idx', 'input_str', 'output_str'])
+        self.clusters_df = pd.DataFrame(self.cluster_examples, columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
+        del self.mention_examples
+        del self.cluster_examples
+
+        mentions_train, mentions_val = train_test_split(self.mentions_df, test_size=self.val_size)
+        clusters_train = self.clusters_df.loc[self.clusters_df['idx'].isin(mentions_train['idx'])]
+        clusters_val = self.clusters_df.loc[self.clusters_df['idx'].isin(mentions_val['idx'])]
+
+        self.mention_dataset = { 'train' : Dataset.from_pandas(mentions_train), 'val' : Dataset.from_pandas(mentions_val) }
+        self.cluster_dataset = { 'train' : Dataset.from_pandas(clusters_train), 'val' : Dataset.from_pandas(clusters_val) }
+        for key in self.mention_dataset.keys():
+            self.mention_dataset[key] = self.mention_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
+                                                                      batched=True,
+                                                                      batch_size=self.batch_size,
+                                                                      remove_columns=['idx', 'input_str', 'output_str'])    
+            self.mention_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
+
+            self.cluster_dataset[key] = self.cluster_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
+                                                                      batched=True,
+                                                                      batch_size=self.batch_size,
+                                                                      remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])    
+            self.cluster_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
 
     def _parse_jsonlines(self, file_path):
         examples = []
@@ -231,15 +279,15 @@ class CondCoresDataset(Dataset):
                 continue
 
             print(f"mention: idx = {idx}")
-            coref_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
-            self.mentions_examples.append((words_str, entity_mentions))
-        return coref_examples, num_examples_filtered
+            #coref_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
+            self.mention_examples.append((idx, words_str, entity_mentions))
+        return num_examples_filtered
 
     def _binary_clustering_tokenize(self, examples):
         coref_examples = []
         num_examples_filtered = 0
         for idx, (_, words, clusters, _) in enumerate(examples):
-            current_example_clusters = []
+            current_cluster_examples = []
             mentions = sum([len(c) for c in clusters])
             for c_i, cluster in enumerate(clusters):
                 try:
@@ -275,12 +323,11 @@ class CondCoresDataset(Dataset):
                         num_examples_filtered += 1
                         continue
 
-                    current_example_clusters.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
-                    #self.clusters_examples.append((mention_input_str, cluster_output_str))
-                    self.clusters_examples.append((input_ids, input_ids_mask, output_ids))
-            print(f"clusters: idx = {idx} mentions_examples = {len(current_example_clusters)} /  {mentions}")
-            coref_examples.extend(current_example_clusters)
-        return coref_examples, num_examples_filtered
+                    #current_cluster_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
+                    current_cluster_examples.append((idx, c_i, mention, mention_input_str, cluster_output_str))
+            print(f"clusters: idx = {idx} mention_examples = {len(current_cluster_examples)} /  {mentions}")
+            self.cluster_examples.extend(current_cluster_examples)
+        return num_examples_filtered
 
     def __len__(self):
         return len(self.examples)
@@ -336,17 +383,6 @@ def test_encoder_decoder():
     print(d['textual_clusters'])
     print()
 
-def process_data_to_model_inputs(batch):
-    import ipdb; ipdb.set_trace()
-    batch["labels"] = outputs.input_ids
-
-    # We have to make sure that the PAD token is ignored
-    batch["labels"] = [
-        [-100 if token == tokenizer.pad_token_id else token for token in labels]
-        for labels in batch["labels"]
-    ]
-    return batch
-
 def create_datasets():
     # path
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
@@ -361,23 +397,14 @@ def create_datasets():
     print("Loading pre-trained tokenizer")
     tokenizer = BertTokenizer.from_pretrained(tokenizer_path, cache_dir=cache_dir)
     print("pre-trained: tokenizer: {}".format(len(tokenizer)))
-    clusters_path = os.path.join(data_dir, 'clusters.pkl')
-    if os.path.exists(clusters_path):
-        with open(clusters_path, 'rb') as f:
-            clusters_db = pickle.load(f)
-    else:
-        clusters_db  = CondCoresDataset(file_path, tokenizer, 'clusters', max_seq_length=512)
-        with open(clusters_path, 'wb') as f:
-            pickle.dump(clusters_db, f)
 
-    mentions_path = os.path.join(data_dir, 'mentions.pkl')
-    if os.path.exists(mentions_path):
-        with open(mentions_path, 'rb') as f:
-            mentions_db = pickle.load(f)
+    dataset_builder_path = os.path.join(data_dir, 'train_dataset_builder.pkl')
+    if os.path.exists(dataset_builder_path):
+        with open(dataset_builder_path, 'rb') as f:
+            builder = pickle.load(f)
     else:
-        mentions_db = CondCoresDataset(file_path, tokenizer, 'mentions', max_seq_length=512)
-        with open(mentions_path, 'wb') as f:
-            pickle.dump(mentions_db, f)
-    import ipdb; ipdb.set_trace()
+        builder = CondCoresDatasetBuilder(file_path, tokenizer, max_seq_length=512)
+        with open(dataset_builder_path, 'wb') as f:
+            pickle.dump(builder, f)
 
 create_datasets()
