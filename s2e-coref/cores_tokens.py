@@ -3,7 +3,8 @@ import logging
 import os
 import pickle
 from collections import namedtuple
-from datasets import Dataset
+
+from datasets import Dataset, load_metric
 
 import torch
 import pandas as pd
@@ -12,7 +13,10 @@ from sklearn.model_selection import train_test_split
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
 from utils import flatten_list_of_lists
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
+
+# Training imports
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
+from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer
 
 STARTING_TOKEN = '<<'
 ENDING_TOKEN = '>>'
@@ -163,10 +167,10 @@ class CondCoresDatasetBuilder(object):
         print(f"Reading dataset from {file_path}")
         examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
         self.max_seq_length = max_seq_length
-        self.num_mention_examples_filtered = self._entity_mention_tokenize(examples)
+        self.num_mention_examples_filtered, trunced_examples = self._entity_mention_tokenize(examples)
         print(
             f"Finished preprocessing Entity-Mentions dataset. {len(self.mention_examples)} examples were extracted, {self.num_mention_examples_filtered} were filtered due to sequence length.")
-        self.num_cluster_examples_filtered = self._binary_clustering_tokenize(examples)
+        self.num_cluster_examples_filtered = self._binary_clustering_tokenize(trunced_examples)
         print(
             f"Finished preprocessing Clusters dataset. {len(self.cluster_examples)} examples were extracted, {self.num_cluster_examples_filtered} were filtered due to sequence length.")
 
@@ -197,8 +201,8 @@ class CondCoresDatasetBuilder(object):
         return batch
 
     def _to_dataset(self):
-        self.mentions_df = pd.DataFrame(self.mention_examples, columns=['idx', 'input_str', 'output_str'])
-        self.clusters_df = pd.DataFrame(self.cluster_examples, columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
+        self.mentions_df = pd.DataFrame(self.mention_examples, columns=['idx', 'chunk_id', 'input_str', 'output_str'])
+        self.clusters_df = pd.DataFrame(self.cluster_examples, columns=['idx', 'chunk_id', 'cluster_index', 'mention', 'input_str', 'output_str'])
         del self.mention_examples
         del self.cluster_examples
 
@@ -212,13 +216,13 @@ class CondCoresDatasetBuilder(object):
             self.mention_dataset[key] = self.mention_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
                                                                       batched=True,
                                                                       batch_size=self.batch_size,
-                                                                      remove_columns=['idx', 'input_str', 'output_str'])    
+                                                                      remove_columns=['idx', 'chunk_id', 'input_str', 'output_str'])    
             self.mention_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
 
             self.cluster_dataset[key] = self.cluster_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
                                                                       batched=True,
                                                                       batch_size=self.batch_size,
-                                                                      remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])    
+                                                                      remove_columns=['idx', 'chunk_id', 'cluster_index', 'mention', 'input_str', 'output_str'])    
             self.cluster_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
 
     def _parse_jsonlines(self, file_path):
@@ -247,46 +251,83 @@ class CondCoresDatasetBuilder(object):
         loss[0].backward()
         print("Loss backword")
         
-    def _entity_mention_tokenize(self, examples):
-        coref_examples = []
-        num_examples_filtered = 0
-        for idx, (_, words, clusters, _) in enumerate(examples):
-            try:
-                words_str        = ' '.join(words)
-                tokenized_input  = self.tokenizer(words_str, padding="max_length") # padding
-                input_ids        = tokenized_input['input_ids']
-                input_ids        = torch.tensor(input_ids).unsqueeze(0)
-                input_ids_mask   = tokenized_input['attention_mask']
-                input_ids_mask   = torch.tensor(input_ids_mask).unsqueeze(0)
+    def _trunc_words(self, words, clusters, trunc_count):
+        if trunc_count > 0:
+            w = words[:-trunc_count]
+        else:
+            w = words
+        new_clusters = [ [[start, end] for start, end in cluster if start < len(w) and end < len(w)] for cluster in clusters ]
+        new_clusters = [ cluster for cluster in new_clusters if cluster ]
+        mentions_count = sum([len(c) for c in new_clusters])
+        #print(f"trunc_count = {trunc_count}, w length = {len(w)}, mentions_count = {mentions_count}")
+        return w, new_clusters
 
-                entity_mentions = encode(words, clusters, None)
-                entity_mentions = ' '.join(entity_mentions)
-                tokenized_output = self.tokenizer(entity_mentions, padding="max_length")
-                output_ids       = tokenized_output['input_ids']
-                output_ids       = torch.tensor(output_ids).unsqueeze(0)
-                output_ids_mask  = tokenized_output['attention_mask']
-                output_ids_mask  = torch.tensor(output_ids_mask).unsqueeze(0)
-            except Exception as e:
-                continue
+    def _process_example(self, words, clusters, trunc_step=10):
+        w = list(words)
+        trunc_count= 0
+        total_mention_count = sum([len(c) for c in clusters])
+        while w:
+            w, new_clusters = self._trunc_words(list(words), clusters, trunc_count)
+            words_str        = ' '.join(w)
+            tokenized_input  = self.tokenizer(words_str, padding="max_length") # padding
+            input_ids        = tokenized_input['input_ids']
+            input_ids        = torch.tensor(input_ids).unsqueeze(0)
+            input_ids_mask   = tokenized_input['attention_mask']
+            input_ids_mask   = torch.tensor(input_ids_mask).unsqueeze(0)
+
+            entity_mentions = encode(w, new_clusters, None)
+            entity_mentions = ' '.join(entity_mentions)
+            tokenized_output = self.tokenizer(entity_mentions, padding="max_length")
+            output_ids       = tokenized_output['input_ids']
+            output_ids       = torch.tensor(output_ids).unsqueeze(0)
+            output_ids_mask  = tokenized_output['attention_mask']
+            output_ids_mask  = torch.tensor(output_ids_mask).unsqueeze(0)
 
             #output_str = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
             if 0 < self.max_seq_length < input_ids.shape[1]:
-                num_examples_filtered += 1
+                trunc_count += trunc_step
                 continue
-
+                
             if 0 < self.max_seq_length < output_ids.shape[1]:
-                num_examples_filtered += 1
+                trunc_count += trunc_step
                 continue
+            break
+        return w, words_str, new_clusters, entity_mentions, trunc_count
 
-            print(f"mention: idx = {idx}")
-            #coref_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
-            self.mention_examples.append((idx, words_str, entity_mentions))
-        return num_examples_filtered
+    def _entity_mention_tokenize(self, examples):
+        trunced_examples = []
+        num_examples_filtered = 0
+        for idx, (_, words, clusters, _) in enumerate(examples):
+            chunk_id = 0
+            try:
+                new_words, words_str, new_clusters, entity_mentions, trunc_count = self._process_example(words, clusters)
+            except:
+                continue
+            self.mention_examples.append((idx, chunk_id, words_str, entity_mentions))
+            trunced_examples.append((idx, chunk_id, new_words, new_clusters))
+            print(f"mention: idx = {idx} chunk_id = {chunk_id}")
+
+            trunc_length = len(new_words)
+            while trunc_length <  len(words):
+                remain_words    = words[trunc_length:]
+                remain_clusters = [ [[start - trunc_length , end - trunc_length] for start, end in cluster \
+                                  if start >= trunc_length and end >= trunc_length] for cluster in clusters ]
+                remain_clusters = [ cluster for cluster in remain_clusters if cluster ]
+                new_words, words_str, new_clusters, entity_mentions, trunc_count = self._process_example(remain_words, remain_clusters)
+                self.mention_examples.append((idx, chunk_id, words_str, entity_mentions))
+                trunced_examples.append((idx, chunk_id, new_words, new_clusters))
+                trunc_length += len(new_words)
+                chunk_id += 1
+                print(f"mention: idx = {idx} chunk_id = {chunk_id}")
+                if new_words == remain_words:
+                    break
+
+        return num_examples_filtered, trunced_examples
 
     def _binary_clustering_tokenize(self, examples):
         coref_examples = []
         num_examples_filtered = 0
-        for idx, (_, words, clusters, _) in enumerate(examples):
+        for (idx, chunk_id, words, clusters) in examples:
             current_cluster_examples = []
             mentions = sum([len(c) for c in clusters])
             for c_i, cluster in enumerate(clusters):
@@ -324,8 +365,8 @@ class CondCoresDatasetBuilder(object):
                         continue
 
                     #current_cluster_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
-                    current_cluster_examples.append((idx, c_i, mention, mention_input_str, cluster_output_str))
-            print(f"clusters: idx = {idx} mention_examples = {len(current_cluster_examples)} /  {mentions}")
+                    current_cluster_examples.append((idx, chunk_id, c_i, mention, mention_input_str, cluster_output_str))
+            print(f"clusters: idx = {idx} chunk_id = {chunk_id} mention_examples = {len(current_cluster_examples)} /  {mentions}")
             self.cluster_examples.extend(current_cluster_examples)
         return num_examples_filtered
 
@@ -335,10 +376,10 @@ class CondCoresDatasetBuilder(object):
     def __getitem__(self, item):
         return self.examples[item]
 
-def test_encoder_decoder():
-    W = ['--', 'basically', ',', 'it', 'was', 'unanimously', 'agreed', 'upon', 'by', 'the', 'various', 'relevant', 'parties', '.', 'To', 'express', 'its', 'determination', ',', 'the', 'Chinese', 'securities', 'regulatory', 'department', 'compares', 'this', 'stock', 'reform', 'to', 'a', 'die', 'that', 'has', 'been', 'cast', '.', 'It', 'takes', 'time', 'to', 'prove', 'whether', 'the', 'stock', 'reform', 'can', 'really', 'meet', 'expectations', ',', 'and', 'whether', 'any', 'deviations', 'that', 'arise', 'during', 'the', 'stock', 'reform', 'can', 'be', 'promptly', 'corrected', '.', 'Dear', 'viewers', ',', 'the', 'China', 'News', 'program', 'will', 'end', 'here', '.', 'This', 'is', 'Xu', 'Li', '.', 'Thank', 'you', 'everyone', 'for', 'watching', '.', 'Coming', 'up', 'is', 'the', 'Focus', 'Today', 'program', 'hosted', 'by', 'Wang', 'Shilin', '.', 'Good-bye', ',', 'dear', 'viewers', '.']
+WordsExample = ['--', 'basically', ',', 'it', 'was', 'unanimously', 'agreed', 'upon', 'by', 'the', 'various', 'relevant', 'parties', '.', 'To', 'express', 'its', 'determination', ',', 'the', 'Chinese', 'securities', 'regulatory', 'department', 'compares', 'this', 'stock', 'reform', 'to', 'a', 'die', 'that', 'has', 'been', 'cast', '.', 'It', 'takes', 'time', 'to', 'prove', 'whether', 'the', 'stock', 'reform', 'can', 'really', 'meet', 'expectations', ',', 'and', 'whether', 'any', 'deviations', 'that', 'arise', 'during', 'the', 'stock', 'reform', 'can', 'be', 'promptly', 'corrected', '.', 'Dear', 'viewers', ',', 'the', 'China', 'News', 'program', 'will', 'end', 'here', '.', 'This', 'is', 'Xu', 'Li', '.', 'Thank', 'you', 'everyone', 'for', 'watching', '.', 'Coming', 'up', 'is', 'the', 'Focus', 'Today', 'program', 'hosted', 'by', 'Wang', 'Shilin', '.', 'Good-bye', ',', 'dear', 'viewers', '.']
 
-    C = [[[16, 16], [19, 23]], [[42, 44], [57, 59], [25, 27]], [[83, 83], [82, 82]]]
+ClusterExample = [[[16, 16], [19, 23]], [[42, 44], [57, 59], [25, 27]], [[83, 83], [82, 82]]]
+def test_encoder_decoder():
     print(str_clusters(W,C))
     for c_i, c in enumerate(C):
         print()
@@ -383,18 +424,61 @@ def test_encoder_decoder():
     print(d['textual_clusters'])
     print()
 
+rouge = load_metric("rouge")
+def compute_metrics(pred):
+    labels_ids = pred.label_ids
+    pred_ids = pred.predictions
+
+    # all unnecessary tokens are removed
+    pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+    labels_ids[labels_ids == -100] = tokenizer.pad_token_id
+    label_str = tokenizer.batch_decode(labels_ids, skip_special_tokens=True)
+    rouge_output = rouge.compute(predictions=pred_str, references=label_str, rouge_types=["rouge2"])["rouge2"].mid
+    return {
+        "rouge2_precision": round(rouge_output.precision, 4),
+        "rouge2_recall": round(rouge_output.recall, 4),
+        "rouge2_fmeasure": round(rouge_output.fmeasure, 4)
+    }
+
+
+def train(model, tokenizer, builder, training_output_dir, batch_size=10):
+    training_args = Seq2SeqTrainingArguments(
+                output_dir=training_output_dir,
+                evaluation_strategy="steps",
+                per_device_train_batch_size=batch_size,
+                per_device_eval_batch_size=batch_size,
+                predict_with_generate=True,
+                logging_steps=2,  # set to 1000 for full training
+                save_steps=16,  # set to 500 for full training
+                eval_steps=4,  # set to 8000 for full training
+                warmup_steps=1,  # set to 2000 for full training
+                max_steps=16, # delete for full training
+                overwrite_output_dir=True,
+                save_total_limit=3,
+                fp16=True)
+    trainer = Seq2SeqTrainer(
+                model=model,
+                tokenizer=tokenizer,
+                args=training_args,
+                compute_metrics=compute_metrics,
+                train_dataset=builder.mention_dataset['train'],
+                eval_dataset=builder.mention_dataset['val'])
+    trainer.train()
+    
+tokenizer = None
 def create_datasets():
     # path
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
     data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
+    training_output_dir = os.path.join(proj_dir, 'bert2bert_output.1')
     cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
     #file_path = os.path.join(data_dir, 'train.english.jsonlines')
     file_path = os.path.join(data_dir, 'mini_train.english.jsonlines')
     tokenizer_path = os.path.join(proj_dir, 'bert2bert_model', 'tokenizer')
-    model_path = os.path.join(proj_dir, 'bert2bert_model', 'model')
 
     print("Loading pre-trained tokenizer")
+    global tokenizer
     tokenizer = BertTokenizer.from_pretrained(tokenizer_path, cache_dir=cache_dir)
     print("pre-trained: tokenizer: {}".format(len(tokenizer)))
 
@@ -406,5 +490,13 @@ def create_datasets():
         builder = CondCoresDatasetBuilder(file_path, tokenizer, max_seq_length=512)
         with open(dataset_builder_path, 'wb') as f:
             pickle.dump(builder, f)
+    print("Loading pre-trained model")
+    model_path = os.path.join(proj_dir, 'bert2bert_model', 'model')
+    bert2bert = EncoderDecoderModel.from_pretrained(model_path)
+    device = torch.device('cuda')
+    bert2bert = bert2bert.to(device)
+    train(bert2bert, tokenizer, builder, training_output_dir)
 
-create_datasets()
+
+if __name__ == "__main__":
+    create_datasets()
