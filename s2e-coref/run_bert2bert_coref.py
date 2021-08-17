@@ -5,17 +5,26 @@ import os
 import shutil
 import git
 import torch
+import random
+import numpy as np
 
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
 
 from modeling import S2E
 from data import get_dataset
-from cores_tokens import get_cores_tokens
+from cores_tokens import get_cores_tokens, WordsExample, ClusterExample, encode
 from bert2bert_cli import parse_args
-from training import train, set_seed
+#from training import train, set_seed
 from eval import Evaluator
 from utils import write_meta_data
+
+def set_seed(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
 
 logger = logging.getLogger(__name__)
 def main():
@@ -108,16 +117,16 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
-    if args.model_name_or_path and os.path.isdir(args.model_name_or_path):
+    model_path = os.path.join(args.model_name_or_path, 'model')
+    if os.path.isdir(model_path):
         logger.info("Loading pre-trained bert2bert model")
-        model_path = os.path.join(args.model_name_or_path, 'model')
         bert2bert = EncoderDecoderModel.from_pretrained(model_path)
         print("pre-trained bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
     else:
         logger.info("Building new bert2bert model")
         logger.info("Building BERT Encoder")
         encoder = BertGenerationEncoder.from_pretrained(args.config_name, cache_dir=args.cache_dir)
-        logger.info("Buuilding BERT Decoder")
+        logger.info("Building BERT Decoder")
         decoder = BertGenerationDecoder.from_pretrained(args.config_name, add_cross_attention=True, is_decoder=True, cache_dir=args.cache_dir)
         # VERY IMPORTANT STEP!
         logger.info("resize token embeddings")
@@ -126,16 +135,18 @@ def main():
         logger.info("Building BERT to BERT model")
         bert2bert = EncoderDecoderModel(encoder=encoder, decoder=decoder)
         print("new bert2bert: {}".format(str(bert2bert.get_input_embeddings())))
+        bert2bert.save_pretrained(model_path)
     bert2bert.to(args.device)
 
     if True:
         logger.info("Running Training Example")
-        input_example = ' '.join(W)
-        _, output_example = encode(W,C,None)
+        input_example = ' '.join(WordsExample)
+        output_example = encode(WordsExample, ClusterExample, None)
+        output_example = ' '.join(output_example)
     
-        input_ids = tokenizer(input_example, add_special_tokens=True, return_tensors="pt").input_ids.to(args.device)
+        input_ids = tokenizer(input_example, padding="max_length", return_tensors="pt").input_ids.to(args.device)
         logger.info("Input: str: {}\n IDs: {}".format(input_example, str(input_ids)))
-        output_ids = tokenizer(output_example, return_tensors="pt").input_ids.to(args.device)
+        output_ids = tokenizer(output_example, padding="max_length", return_tensors="pt").input_ids.to(args.device)
         logger.info("Output: str: {}\n IDs: {}".format(output_example, str(output_ids)))
 
         # train...
@@ -160,11 +171,11 @@ def main():
 
     evaluator = Evaluator(args, tokenizer)
     # Training
-    if args.do_train:
-        train_dataset = get_dataset(args, tokenizer, evaluate=False)
+    #if args.do_train:
+    #    train_dataset = get_dataset(args, tokenizer, evaluate=False)
 
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer, evaluator)
-        logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
+    #    global_step, tr_loss = train(args, train_dataset, model, tokenizer, evaluator)
+    #    logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Saving best-practices: if you use save_pretrained for the model and tokenizer,
     # you can reload them using from_pretrained()

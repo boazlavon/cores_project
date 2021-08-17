@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import pickle
+import time, threading, sys
 from collections import namedtuple
 
 from datasets import Dataset, load_metric
@@ -150,7 +151,7 @@ def str_clusters(sentence, clusters):
 
 #CondCoresExample = namedtuple("CondCoresExample", ["input_ids", "input_attention_mask", "output_ids"])
 class CondCoresDatasetBuilder(object):
-    def __init__(self, file_path, tokenizer, max_seq_length=-1, model=None, batch_size=10, val_size=0.2):
+    def __init__(self, file_path, tokenizer, max_seq_length=-1, model=None, batch_size=1, val_size=0.2):
         self.mention_examples = []
         self.cluster_examples = []
         self.mention_dataset = None
@@ -183,20 +184,12 @@ class CondCoresDatasetBuilder(object):
 
         batch["input_ids"] = inputs.input_ids
         batch["attention_mask"] = inputs.attention_mask
-
-        # create 0 global_attention_mask lists
-        batch["global_attention_mask"] = len(batch["input_ids"]) * [
-        [0 for _ in range(len(batch["input_ids"][0]))]
-        ]
-
-        # since above lists are references, the following line changes the 0 index for all samples
-        batch["global_attention_mask"][0][0] = 1
-        batch["labels"] = outputs.input_ids
+        batch["decoder_input_ids"] = outputs.input_ids
+        batch["decoder_attention_mask"] = outputs.attention_mask
 
         # We have to make sure that the PAD token is ignored
-        batch["labels"] = [ [-100 if token == tokenizer.pad_token_id else token for token in labels]
-                            for labels in batch["labels"]
-        ]
+        batch["labels"] = outputs.input_ids.copy()
+        batch["labels"] = [[-100 if token == tokenizer.pad_token_id else token for token in labels] for labels in batch["labels"]]
 
         return batch
 
@@ -217,13 +210,13 @@ class CondCoresDatasetBuilder(object):
                                                                       batched=True,
                                                                       batch_size=self.batch_size,
                                                                       remove_columns=['idx', 'chunk_id', 'input_str', 'output_str'])    
-            self.mention_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
+            self.mention_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"])
 
             self.cluster_dataset[key] = self.cluster_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
                                                                       batched=True,
                                                                       batch_size=self.batch_size,
                                                                       remove_columns=['idx', 'chunk_id', 'cluster_index', 'mention', 'input_str', 'output_str'])    
-            self.cluster_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "global_attention_mask", "labels"])
+            self.cluster_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"])
 
     def _parse_jsonlines(self, file_path):
         examples = []
@@ -426,6 +419,9 @@ def test_encoder_decoder():
 
 rouge = load_metric("rouge")
 def compute_metrics(pred):
+    torch.cuda.empty_cache()
+    sys.stdout.flush()
+    sys.stderr.flush()
     labels_ids = pred.label_ids
     pred_ids = pred.predictions
 
@@ -441,7 +437,7 @@ def compute_metrics(pred):
     }
 
 
-def train(model, tokenizer, builder, training_output_dir, batch_size=10):
+def train(model, tokenizer, builder, training_output_dir, batch_size=1):
     training_args = Seq2SeqTrainingArguments(
                 output_dir=training_output_dir,
                 evaluation_strategy="steps",
@@ -455,7 +451,7 @@ def train(model, tokenizer, builder, training_output_dir, batch_size=10):
                 max_steps=16, # delete for full training
                 overwrite_output_dir=True,
                 save_total_limit=3,
-                fp16=True)
+                fp16=False)
     trainer = Seq2SeqTrainer(
                 model=model,
                 tokenizer=tokenizer,
@@ -465,8 +461,17 @@ def train(model, tokenizer, builder, training_output_dir, batch_size=10):
                 eval_dataset=builder.mention_dataset['val'])
     trainer.train()
     
+def foo():
+    sys.stdout.flush()
+    sys.stderr.flush()
+    torch.cuda.empty_cache()
+    threading.Timer(2, foo).start()
+
 tokenizer = None
 def create_datasets():
+
+    foo()
+
     # path
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
@@ -496,6 +501,7 @@ def create_datasets():
     device = torch.device('cuda')
     bert2bert = bert2bert.to(device)
     train(bert2bert, tokenizer, builder, training_output_dir)
+    print("Success")
 
 
 if __name__ == "__main__":
