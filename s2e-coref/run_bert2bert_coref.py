@@ -109,7 +109,7 @@ def main():
         tokenizer.add_tokens(cores_tokens)
         logger.info("add tokens: {}".format(str(cores_tokens)))
         logger.info("tokenizer: {}".format(len(tokenizer)))
-        tokenizer.model_max_length = 512
+        tokenizer.model_max_length = 128 # this is not saved!
         tokenizer.save_pretrained(tokenizer_path)
     else:
         raise ValueError(

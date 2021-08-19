@@ -1,4 +1,5 @@
 import json
+import random
 import logging
 import os
 import pickle
@@ -13,7 +14,7 @@ from sklearn.model_selection import train_test_split
 
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
 from utils import flatten_list_of_lists
-from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
+from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer, BertTokenizerFast
 
 # Training imports
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
@@ -150,8 +151,8 @@ def str_clusters(sentence, clusters):
 
 
 #CondCoresExample = namedtuple("CondCoresExample", ["input_ids", "input_attention_mask", "output_ids"])
-class CondCoresDatasetBuilder(object):
-    def __init__(self, file_path, tokenizer, max_seq_length=-1, model=None, batch_size=1, val_size=0.2):
+class CoresDatasetPreProcessor(object):
+    def __init__(self, training_data_path, tokenizer, max_seq_length=-1, model=None, batch_size=1, val_size=0.2):
         self.mention_examples = []
         self.cluster_examples = []
         self.mention_dataset = None
@@ -165,8 +166,8 @@ class CondCoresDatasetBuilder(object):
         if model is not None:
             self.model = model.to(self.device)
         self.tokenizer = tokenizer
-        print(f"Reading dataset from {file_path}")
-        examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
+        print(f"Reading dataset from {training_data_path}")
+        examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(training_data_path)
         self.max_seq_length = max_seq_length
         self.num_mention_examples_filtered, trunced_examples = self._entity_mention_tokenize(examples)
         print(
@@ -179,8 +180,8 @@ class CondCoresDatasetBuilder(object):
 
     @staticmethod
     def process_data_to_model_inputs(batch):
-        inputs = tokenizer(batch["input_str"],   padding="max_length")
-        outputs = tokenizer(batch["output_str"], padding="max_length")
+        inputs = tokenizer(batch["input_str"],   padding="max_length", truncation=True, max_length=128)
+        outputs = tokenizer(batch["output_str"], padding="max_length", truncation=True, max_length=128)
 
         batch["input_ids"] = inputs.input_ids
         batch["attention_mask"] = inputs.attention_mask
@@ -194,36 +195,17 @@ class CondCoresDatasetBuilder(object):
         return batch
 
     def _to_dataset(self):
-        self.mentions_df = pd.DataFrame(self.mention_examples, columns=['idx', 'chunk_id', 'input_str', 'output_str'])
-        self.clusters_df = pd.DataFrame(self.cluster_examples, columns=['idx', 'chunk_id', 'cluster_index', 'mention', 'input_str', 'output_str'])
+        self.mentions_df = pd.DataFrame(self.mention_examples, columns=['idx', 'input_str', 'output_str'])
+        self.clusters_df = pd.DataFrame(self.cluster_examples, columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
         del self.mention_examples
         del self.cluster_examples
 
-        mentions_train, mentions_val = train_test_split(self.mentions_df, test_size=self.val_size)
-        clusters_train = self.clusters_df.loc[self.clusters_df['idx'].isin(mentions_train['idx'])]
-        clusters_val = self.clusters_df.loc[self.clusters_df['idx'].isin(mentions_val['idx'])]
-
-        self.mention_dataset = { 'train' : Dataset.from_pandas(mentions_train), 'val' : Dataset.from_pandas(mentions_val) }
-        self.cluster_dataset = { 'train' : Dataset.from_pandas(clusters_train), 'val' : Dataset.from_pandas(clusters_val) }
-        for key in self.mention_dataset.keys():
-            self.mention_dataset[key] = self.mention_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
-                                                                      batched=True,
-                                                                      batch_size=self.batch_size,
-                                                                      remove_columns=['idx', 'chunk_id', 'input_str', 'output_str'])    
-            self.mention_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"])
-
-            self.cluster_dataset[key] = self.cluster_dataset[key].map(CondCoresDatasetBuilder.process_data_to_model_inputs,
-                                                                      batched=True,
-                                                                      batch_size=self.batch_size,
-                                                                      remove_columns=['idx', 'chunk_id', 'cluster_index', 'mention', 'input_str', 'output_str'])    
-            self.cluster_dataset[key].set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"])
-
-    def _parse_jsonlines(self, file_path):
+    def _parse_jsonlines(self, training_data_path):
         examples = []
         max_mention_num = -1
         max_cluster_size = -1
         max_num_clusters = -1
-        with open(file_path, 'r') as f:
+        with open(training_data_path, 'r') as f:
             for line in f:
                 d = json.loads(line.strip())
                 doc_key = d["doc_key"]
@@ -285,6 +267,7 @@ class CondCoresDatasetBuilder(object):
                 trunc_count += trunc_step
                 continue
             break
+            print('Done')
         return w, words_str, new_clusters, entity_mentions, trunc_count
 
     def _entity_mention_tokenize(self, examples):
@@ -296,7 +279,7 @@ class CondCoresDatasetBuilder(object):
                 new_words, words_str, new_clusters, entity_mentions, trunc_count = self._process_example(words, clusters)
             except:
                 continue
-            self.mention_examples.append((idx, chunk_id, words_str, entity_mentions))
+            self.mention_examples.append((f"{idx}_{chunk_id}", words_str, entity_mentions))
             trunced_examples.append((idx, chunk_id, new_words, new_clusters))
             print(f"mention: idx = {idx} chunk_id = {chunk_id}")
 
@@ -307,10 +290,10 @@ class CondCoresDatasetBuilder(object):
                                   if start >= trunc_length and end >= trunc_length] for cluster in clusters ]
                 remain_clusters = [ cluster for cluster in remain_clusters if cluster ]
                 new_words, words_str, new_clusters, entity_mentions, trunc_count = self._process_example(remain_words, remain_clusters)
-                self.mention_examples.append((idx, chunk_id, words_str, entity_mentions))
+                chunk_id += 1
+                self.mention_examples.append((f"{idx}_{chunk_id}", words_str, entity_mentions))
                 trunced_examples.append((idx, chunk_id, new_words, new_clusters))
                 trunc_length += len(new_words)
-                chunk_id += 1
                 print(f"mention: idx = {idx} chunk_id = {chunk_id}")
                 if new_words == remain_words:
                     break
@@ -358,7 +341,7 @@ class CondCoresDatasetBuilder(object):
                         continue
 
                     #current_cluster_examples.append(CondCoresExample(input_ids=input_ids, input_attention_mask=input_ids_mask, output_ids=output_ids))
-                    current_cluster_examples.append((idx, chunk_id, c_i, mention, mention_input_str, cluster_output_str))
+                    current_cluster_examples.append((f"{idx}_{chunk_id}", c_i, mention, mention_input_str, cluster_output_str))
             print(f"clusters: idx = {idx} chunk_id = {chunk_id} mention_examples = {len(current_cluster_examples)} /  {mentions}")
             self.cluster_examples.extend(current_cluster_examples)
         return num_examples_filtered
@@ -469,37 +452,42 @@ def foo():
 
 tokenizer = None
 def create_datasets():
-
     foo()
 
     # path
     proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
-    proj_dir = r'/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref'
+    if COLAB:
+        proj_dir = r'.'
     data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-    training_output_dir = os.path.join(proj_dir, 'bert2bert_output.1')
     cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
-    #file_path = os.path.join(data_dir, 'train.english.jsonlines')
-    file_path = os.path.join(data_dir, 'mini_train.english.jsonlines')
-    tokenizer_path = os.path.join(proj_dir, 'bert2bert_model', 'tokenizer')
+
+    training_data_path = os.path.join(data_dir, 'train.english.jsonlines')
+    #training_data_path = os.path.join(data_dir, 'mini_train.english.jsonlines')
+    #training_data_path = os.path.join(data_dir, 'super_mini_train.english.jsonlines')
+
 
     print("Loading pre-trained tokenizer")
     global tokenizer
+    tokenizer_path = os.path.join(proj_dir, 'bert2bert_model', 'tokenizer')
     tokenizer = BertTokenizer.from_pretrained(tokenizer_path, cache_dir=cache_dir)
+    tokenizer.model_max_length = 128
     print("pre-trained: tokenizer: {}".format(len(tokenizer)))
 
-    dataset_builder_path = os.path.join(data_dir, 'train_dataset_builder.pkl')
+    dataset_builder_path = training_data_path + '.pkl'
     if os.path.exists(dataset_builder_path):
         with open(dataset_builder_path, 'rb') as f:
             builder = pickle.load(f)
     else:
-        builder = CondCoresDatasetBuilder(file_path, tokenizer, max_seq_length=512)
+        builder = CoresDatasetPreProcessor(training_data_path, tokenizer, max_seq_length=128)
         with open(dataset_builder_path, 'wb') as f:
             pickle.dump(builder, f)
+    print("Exit")
     print("Loading pre-trained model")
     model_path = os.path.join(proj_dir, 'bert2bert_model', 'model')
     bert2bert = EncoderDecoderModel.from_pretrained(model_path)
     device = torch.device('cuda')
     bert2bert = bert2bert.to(device)
+    training_output_dir = os.path.join(proj_dir, 'bert2bert_output.1')
     train(bert2bert, tokenizer, builder, training_output_dir)
     print("Success")
 

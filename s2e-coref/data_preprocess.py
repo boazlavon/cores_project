@@ -64,8 +64,8 @@ print("Split Training & Validation")
 # Make sure that same chunks are used in mentions and clusters validation & training.
 mentions_df  = Dataset.from_pandas(builder.mentions_df)
 clusters_df  = Dataset.from_pandas(builder.clusters_df)
-mentions_df  = mentions_df.select(range(30))
-clusters_df  = clusters_df.select(range(30))
+#mentions_df  = mentions_df.select(range(30))
+#clusters_df  = clusters_df.select(range(30))
 mentions_idxs = mentions_df['idx']
 random.shuffle(mentions_idxs)
 train_idxs_count = int((1 - test_size) * len(mentions_idxs))

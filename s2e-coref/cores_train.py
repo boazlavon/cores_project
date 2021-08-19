@@ -71,13 +71,13 @@ else:
         decoder.resize_token_embeddings(len(tokenizer))
         model = EncoderDecoderModel(encoder=encoder, decoder=decoder)
         model.config.vocab_size = model.config.decoder.vocab_size
+        model.config.decoder_start_token_id = tokenizer.bos_token_id
     elif model_type == 't5':
         model = T5ForConditionalGeneration.from_pretrained("t5-small")
         model.resize_token_embeddings(len(tokenizer))
 
     # Generic configs
     # set special tokens
-    model.config.decoder_start_token_id = tokenizer.bos_token_id
     model.config.eos_token_id = tokenizer.eos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
 
