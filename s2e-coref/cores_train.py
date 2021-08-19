@@ -29,6 +29,12 @@ val_dataset_path = os.path.join(data_dir, f'{model_type}_val_dataset.pkl')
 checkpoints_dir = os.path.join(proj_dir, f'{model_type}_checkpoints')
 cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
 
+init_w = False
+if len(sys.argv) > 2:
+    if sys.argv[2] == 'init':
+        init_w = True
+        checkpoints_dir = os.path.join(proj_dir, f'init_{model_type}_checkpoints')
+
 latest_checkpoint = None
 if os.path.isdir(checkpoints_dir):
     checkpoints = os.listdir(checkpoints_dir)
@@ -49,9 +55,9 @@ with open(val_dataset_path, 'rb') as f:
 print(f"Validation: {len(val_df)}")
 
 if model_type == 'bert':
-    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased", cache_dir=cache_dir)
+    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
 if model_type == 't5':
-    tokenizer = T5Tokenizer.from_pretrained("t5-small", cache_dir=cache_dir)
+    tokenizer = T5Tokenizer.from_pretrained("t5-small")
 
 tokenizer.bos_token = tokenizer.cls_token
 tokenizer.eos_token = tokenizer.sep_token
@@ -63,18 +69,25 @@ if latest_checkpoint:
     print(f'Loading latest checkpoint: {latest_checkpoint}')
     model = EncoderDecoderModel.from_pretrained(latest_checkpoint)
 else:
-    print(f'Building new {model_type} model')
+    print(f'Building new {model_type} from pre-trained model')
     if model_type == 'bert':
-        encoder = BertGenerationEncoder.from_pretrained("bert-base-uncased", cache_dir=cache_dir)
-        decoder = BertGenerationDecoder.from_pretrained("bert-base-uncased", cache_dir=cache_dir, add_cross_attention=True, is_decoder=True)
+        encoder = BertGenerationEncoder.from_pretrained("bert-base-uncased")
+        decoder = BertGenerationDecoder.from_pretrained("bert-base-uncased", add_cross_attention=True, is_decoder=True)
         encoder.resize_token_embeddings(len(tokenizer))
         decoder.resize_token_embeddings(len(tokenizer))
+        if init_w:
+            print('Init Pre-Trained Model Weights')
+            encoder.init_weights()
+            decoder.init_weights()
         model = EncoderDecoderModel(encoder=encoder, decoder=decoder)
         model.config.vocab_size = model.config.decoder.vocab_size
         model.config.decoder_start_token_id = tokenizer.bos_token_id
     elif model_type == 't5':
         model = T5ForConditionalGeneration.from_pretrained("t5-small")
         model.resize_token_embeddings(len(tokenizer))
+        if init_w:
+            print('Init Pre-Trained Model Weights')
+            model.init_weights()
 
     # Generic configs
     # set special tokens
