@@ -1,9 +1,6 @@
-#ls -la ./bert2bert_coref_data/train.english.jsonlines
-#python cores_tokens.py
-
-from transformers import BertTokenizerFast
 from cores_tokens import CoresDatasetPreProcessor
-from transformers import T5Tokenizer
+from transformers import BertTokenizerFast
+from transformers import T5Tokenizer, BartTokenizer
 from datasets import Dataset, concatenate_datasets
 import datasets
 import pickle
@@ -23,26 +20,38 @@ data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
 cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
 
 model_type = sys.argv[1]
-if model_type not in ('bert', 't5'):
+if model_type not in ('bert', 't5', 'bart'):
     print('Invalid Model Type')
     sys.exit(0)
 
-training_file = 'train.english.jsonlines'
-training_data_path = os.path.join(data_dir, training_file)
-dataset_builder_path = f'{training_data_path}.builder.{model_type}.pkl'
+raw_data_path = sys.argv[2]
+if not os.path.exists(raw_data_path):
+    print(f'Raw Data file isn\'t exist: {raw_data_path}')
+    sys.exit(0)
 
-training_dataset_path = os.path.join(data_dir, f'{model_type}_{training_file}_train_dataset.pkl')
-val_dataset_path = os.path.join(data_dir, f'{model_type}_{training_file}_val_dataset.pkl')
+raw_data_file = os.path.basename(raw_data_path)
+is_test=False
+if 'test' in raw_data_file:
+    is_test=True
+print(f'Raw data file: {raw_data_file} is_test={is_test}')
+
+#raw_data_file = 'train.english.jsonlines'
+#raw_data_path = os.path.join(data_dir, raw_data_file)
+dataset_builder_path = f'{raw_data_path}.builder.{model_type}.pkl'
+training_dataset_path = os.path.join(data_dir, f'{model_type}_{raw_data_file}_train_dataset.pkl')
+val_dataset_path = os.path.join(data_dir, f'{model_type}_{raw_data_file}_val_dataset.pkl')
 if os.path.exists(training_dataset_path):
-    print(f'{training_data_path} already exists')
+    print(f'{raw_data_path} already exists')
     sys.exit(0)
 
 if model_type == 'bert':
-    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased", cache_dir=cache_dir)
+    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
     tokenizer.bos_token = tokenizer.cls_token
     tokenizer.eos_token = tokenizer.sep_token
 if model_type == 't5':
-    tokenizer = T5Tokenizer.from_pretrained("t5-small", cache_dir=cache_dir)
+    tokenizer = T5Tokenizer.from_pretrained("t5-small")
+if model_type == 'bart':
+    tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
 
 cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
 tokenizer.add_tokens(cores_tokens)
@@ -54,10 +63,15 @@ if os.path.exists(dataset_builder_path):
         builder = pickle.load(f)
 else:
     print(f"Building New Pre-Processor: {dataset_builder_path}")
-    builder = CoresDatasetPreProcessor(training_data_path, tokenizer, max_seq_length=decoder_max_length)
+    builder = CoresDatasetPreProcessor(raw_data_path, tokenizer, max_seq_length=decoder_max_length, is_test=is_test)
     with open(dataset_builder_path, 'wb') as f:
         pickle.dump(builder, f)
         print(f"Saved: {dataset_builder_path}")
+
+if is_test:
+    print(f"ITS A TEST FILE - NOT Building Training & Validation Datasets for {model_type}")
+    print('Exit')
+    sys.exit(0)
 
 print(f"Building Training & Validation Datasets for {model_type}")
 print("Split Training & Validation")
@@ -161,17 +175,17 @@ print(len(clusters_df_train))
 rate = len(clusters_df_train) / len(mentions_df_train)
 print(f"Clusters is bigger {rate} times that mentions")
 rate = int(rate / 2.0)
-print(f"Extending mentions by {rate}")
+#print(f"Extending mentions by {rate}")
 
 extended_mentions_df = mentions_df_train
-for i in range(rate):
-    extended_mentions_df = concatenate_datasets([extended_mentions_df, mentions_df_train])
+#for i in range(rate):
+#    extended_mentions_df = concatenate_datasets([extended_mentions_df, mentions_df_train])
 
 print(len(extended_mentions_df))
 print(len(clusters_df_train))
 print(int(len(clusters_df_train) / len(extended_mentions_df)))
 
-train_df = datasets.concatenate_datasets([extended_mentions_df, clusters_df_train])
+train_df = datasets.concatenate_datasets([mentions_df_train, clusters_df_train])
 val_df = datasets.concatenate_datasets([mentions_df_val, clusters_df_val])
 print(train_df["input_ids"].shape)
 print(val_df["input_ids"].shape)
