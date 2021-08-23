@@ -11,11 +11,14 @@ import datasets
 from datasets import Dataset, concatenate_datasets
 from datasets import Dataset, load_metric
 
+from utils import flatten_list_of_lists
 import torch
 import pandas as pd
 from cores_tokens import UNK_CLUSTER_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN
+from cores_tokens_test import CoresDatasetPreProcessorTest
 
 # Training imports
+from transformers import BartForConditionalGeneration, BartTokenizer
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer, BertTokenizerFast
 from transformers import BertTokenizerFast
 from transformers import T5Tokenizer
@@ -91,10 +94,6 @@ def inference(sentence):
 
 def load_pickles():
     os.environ["PYTHONUNBUFFERED"] = '1'
-
-    proj_dir = r'.'
-    data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-
     beam_size = sys.argv[3]
     beam_size = int(beam_size)
     if not ((beam_size > 0) and (beam_size < 5)):
@@ -102,40 +101,37 @@ def load_pickles():
         sys.exit(0)
 
     model_type = sys.argv[1]
-    if model_type not in ('bert', 't5', 'init_bert', 'init_t5'):
+    if model_type not in ('bert', 't5', 'bart', 'init_bart', 'init_bert', 'init_t5'):
         print('Invalid Model Type')
         sys.exit(0)
 
     print("Loading tokenizer")
-    if model_type == 'bert':
+    if 'bert' in model_type:
         tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+    if 't5' in model_type:
+        tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    if 'bart' in model_type:
+        tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
+
+    if 't5' not in model_type:
         tokenizer.bos_token = tokenizer.cls_token
         tokenizer.eos_token = tokenizer.sep_token
-    if model_type == 't5':
-        tokenizer = T5Tokenizer.from_pretrained("t5-small")
     cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
     tokenizer.add_tokens(cores_tokens)
     tokenizer.model_max_length = 128
 
-    raw_data_path = sys.argv[2]
-    if not os.path.exists(raw_data_path):
-        print(f'Raw Data file isn\'t exist: {raw_data_path}')
-        sys.exit(0)
-
-    raw_data_file = os.path.basename(raw_data_path)
-    is_test = 'test' in raw_data_file
-    
-    print(f'Raw data file: {raw_data_file} is_test={is_test}')
-    dataset_builder_path = f'{raw_data_path}.builder.{model_type}.pkl'
+    #dataset_builder_path = f'{base_test_data_path}.test_builder.{model_type_no_init}.pkl'
+    dataset_builder_path = sys.argv[2]
     print(f'Builder path: {dataset_builder_path}')
     if not os.path.exists(dataset_builder_path):
-        print(f'Please generate builder (data_preprocessor.py script): {dataset_builder_path}')
+        print(f'Please generate builder (cores_tokens_test.py script): {dataset_builder_path}')
         sys.exit(0)
 
     print("Loading Builder")
     with open(dataset_builder_path, 'rb') as f:
         builder = pickle.load(f)
 
+    proj_dir = r'.'
     checkpoints_dir = os.path.join(proj_dir, f'{model_type}_checkpoints')
     latest_checkpoint = None
     if os.path.isdir(checkpoints_dir):
@@ -150,12 +146,12 @@ def load_pickles():
         sys.exit(0)
 
     print(f'Latest checkpoint: {latest_checkpoint}')
-    if model_type == 'bert':
-        print(f'Loading latest checkpoint: {latest_checkpoint}')
+    if 'bert' in model_type:
         model = EncoderDecoderModel.from_pretrained(latest_checkpoint)
-    if model_type == 't5':
+    elif 't5' in model_type:
         model = T5ForConditionalGeneration.from_pretrained(latest_checkpoint)
-
+    elif 'bart' in model_type:
+        model = BartForConditionalGeneration.from_pretrained(latest_checkpoint)
     return builder, tokenizer, model
 
 def generate_true_cluster_example(true_mention, sentence, model_output_mentions):
@@ -194,7 +190,7 @@ def execute_model(input_str, model, tokenizer, beam_size):
     model_output_str = model_output_str[0]
     return model_output_str
 
-def inference_example(model, builder, tokenizer, i, idx, chunk_id, words, clusters, mentions_env, span_mention_lookup, model_output_str=None):
+def inference_example(model, tokenizer, words, model_output_str=None):
 
     beam_size = int(sys.argv[3])
     model.config.no_repeat_ngram_size = None
@@ -216,7 +212,7 @@ def inference_example(model, builder, tokenizer, i, idx, chunk_id, words, cluste
     print(model_output_mentions)
 
     # update mentions 
-    pred_clusters = {}
+    pred_obj_clusters = {}
 
     cluster_pred_outputs = {}
     # for each mention
@@ -245,26 +241,11 @@ def inference_example(model, builder, tokenizer, i, idx, chunk_id, words, cluste
         model_output_mentions = extract_mentions_with_env(model_output_str)
 
         # update_clusters
-        pred_clusters[mention] = [ m for m in model_output_mentions if m[MEN_CLUSTER_TAG_IDX] == 't' ]
-        print(pred_clusters[mention])
-    return pred_clusters, cluster_pred_outputs
-
-import pickle
-def save_clusters(results, raw_data_path, idx=0):
-    proj_dir = r'.'
-    data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-    path = os.path.join(data_dir, f'inference_results.{raw_data_path}.{idx}.pkl')
-    with open(path, 'wb') as f:
-        pickle.dump(results, f)
-
-def load_clusters(raw_data_path, idx=0):
-    with open(path, 'rb') as f:
-        return pickle.load(f)
+        pred_obj_clusters[mention] = [ m for m in model_output_mentions if m[MEN_CLUSTER_TAG_IDX] == 't' ]
+        print(pred_obj_clusters[mention])
+    return pred_obj_clusters, cluster_pred_outputs
 
 def choose_by_env(mention, span_idxs, suffix_map, words, env_size=3):
-    mention[MEN_LENV_IDX]
-    mention[MEN_RENV_IDX]
-
     words_starts = {}
     chosen = None
     max_score = -1
@@ -292,6 +273,7 @@ def choose_by_env(mention, span_idxs, suffix_map, words, env_size=3):
     print('====')
     print(mention[MEN_LENV_IDX])
     print(mention[MEN_RENV_IDX])
+    print(mention[MEN_SPAN_STR_IDX])
     print(chosen)
     print('====')
     return chosen
@@ -341,8 +323,8 @@ def match_mention_to_word(mention , words):
         return None
     return (start, end)
 
-def create_seperate_clusters(pred_clusters_golden_idxs):
-    clusters = [set(list(items) + [key]) for key, items in pred_clusters_golden_idxs.items()]
+def create_seperate_clusters(pred_obj_clusters_golden_idxs):
+    clusters = [set(list(items) + [key]) for key, items in pred_obj_clusters_golden_idxs.items()]
     i = 0
     while i < len(clusters):
         j = i + 1
@@ -357,100 +339,68 @@ def create_seperate_clusters(pred_clusters_golden_idxs):
     clusters = [list(c) for c in clusters]
     return clusters
 
-def predict_final_clusters(pred_clusters, words):
-    pred_clusters_golden_idxs = {}
-    for mention in pred_clusters.keys():
+def predict_final_clusters(pred_obj_clusters, words):
+    pred_obj_clusters_golden_idxs = {}
+    for mention in pred_obj_clusters.keys():
         match_result = match_mention_to_word(mention, words)
         if match_result is None:
             print(f'Could not find {mention}')
             continue
         start, end = match_result
-        pred_clusters_golden_idxs[(start, end)] = []
+        pred_obj_clusters_golden_idxs[(start, end)] = []
         main_key = (start, end)
 
-        for mention in pred_clusters[mention]:
+        for mention in pred_obj_clusters[mention]:
             match_result = match_mention_to_word(mention, words)
             if match_result is None:
                 print(f'Could not find {mention}')
                 continue
             start, end = match_result
-            pred_clusters_golden_idxs[main_key].append((start, end))
+            pred_obj_clusters_golden_idxs[main_key].append((start, end))
 
-    final_clusters = create_seperate_clusters(pred_clusters_golden_idxs)
-    return final_clusters
+    final_pred_clusters = create_seperate_clusters(pred_obj_clusters_golden_idxs)
+    return final_pred_clusters
 
 def generate_inference_results(builder, tokenizer, model):
     model_type = sys.argv[1]
-    raw_data_path = sys.argv[2]
     beam_size = int(sys.argv[3])
 
-    raw_data_path = os.path.basename(raw_data_path)
     results = []
     proj_dir = r'.'
-    data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-    infer_dir = os.path.join(data_dir, f'inference_results.{model_type}.{raw_data_path}.b{beam_size}')
+    infer_main_dir = os.path.join(proj_dir, 'inference_results')
+    #filename = builder.filename
+    filename = 'test'
+    infer_dir = os.path.join(infer_main_dir, f'inference_results.{model_type}.{filename}.b{beam_size}')
     try:
         os.mkdir(infer_dir)
     except:
         pass
 
     # for each example in test (builder)
-    for i, (idx, chunk_id, words, golden_clusters, mentions_env, span_mention_lookup) in enumerate(builder.env_examples):
-        results_path = os.path.join(infer_dir, f'{idx}_{chunk_id}.pkl')
+    #for i, (idx, paragraph_id, words, golden_clusters, mentions_env, span_mention_lookup) in enumerate(builder.env_examples):
+    for i, (_, doc_key, paragraph_id, sentences, golden_clusters, _) in enumerate(builder.paragraph_examples):
+        doc_key = doc_key.replace('/', '\\')
+        results_path = os.path.join(infer_dir, f'{doc_key}_{paragraph_id}.pkl')
         try:
             with open(results_path, 'rb') as f:
-                pred_clusters, cluster_pred_outputs, final_clusters = pickle.load(f)
-            print(f'Loaded {idx}: {results_path}')
+                pred_obj_clusters, cluster_pred_outputs, final_pred_clusters = pickle.load(f)
+            print(f'Loaded {doc_key}_{paragraph_id}: {results_path}')
             continue
 
         except:
-            print(f'Infering {idx}_{chunk_id}')
+            words = flatten_list_of_lists(sentences)
             words = [w.lower() for w in words]
-            pred_clusters, cluster_pred_outputs = inference_example(model, builder, tokenizer, i, idx, chunk_id, words, golden_clusters, mentions_env, span_mention_lookup)
-
-            final_clusters = predict_final_clusters(pred_clusters, words)
-            print('=======================')
-            print('Predicted:')
-            for cluster in final_clusters:
-                values_str = tuple([' '.join(words[start : end + 1]) for start, end in cluster])
-                print(f'{values_str}')
-            print()
-            print('Golden:')
-            for cluster in golden_clusters:
-                values_str = tuple([' '.join(words[start : end + 1]) for start, end in cluster])
-                print(f'{values_str}')
-            print('=======================')
+            print(f'Infering {doc_key}_{paragraph_id}')
+            pred_obj_clusters, cluster_pred_outputs = inference_example(model, tokenizer, words)
+            final_pred_clusters = predict_final_clusters(pred_obj_clusters, words)
 
             with open(results_path, 'wb') as f:
-                pickle.dump((pred_clusters, cluster_pred_outputs, final_clusters), f)
+                pickle.dump((pred_obj_clusters, cluster_pred_outputs, final_pred_clusters), f)
                 print(f'Saved Model! {results_path}')
-
-def print_inference(builder, tokenizer, model):
-    model_type = sys.argv[1]
-    raw_data_path = sys.argv[2]
-    raw_data_path = os.path.basename(raw_data_path)
-    beam_size = int(sys.argv[3])
-
-    results = []
-    proj_dir = r'.'
-    data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-    infer_dir = os.path.join(data_dir, f'inference_results.{model_type}.{raw_data_path}.b{beam_size}')
-
-    for i, (idx, chunk_id, words, golden_clusters, mentions_env, span_mention_lookup) in enumerate(builder.env_examples):
-        print(f'Infering {idx}_{chunk_id}')
-        words = [w.lower() for w in words]
-        try:
-            results_path = os.path.join(infer_dir, f'{idx}_{chunk_id}.pkl')
-            with open(results_path, 'rb') as f:
-                pred_clusters, cluster_pred_outputs, final_clusters = pickle.load(f)
-            print(f'Loaded {idx}_{chunk_id}: {results_path}')
-        except:
-            print(f'Error loding {idx}_{chunk_id}')
-            continue
 
         print('=======================')
         print('Predicted:')
-        for cluster in final_clusters:
+        for cluster in final_pred_clusters:
             values_str = tuple([' '.join(words[start : end + 1]) for start, end in cluster])
             print(f'{values_str}')
         print()
@@ -459,14 +409,11 @@ def print_inference(builder, tokenizer, model):
             values_str = tuple([' '.join(words[start : end + 1]) for start, end in cluster])
             print(f'{values_str}')
         print('=======================')
-        print()
+
 
 def main():
     builder, tokenizer, model = load_pickles()
     generate_inference_results(builder, tokenizer, model)
-    print()
-    print('Print Inference!')
-    print_inference(builder, tokenizer, model)
 
 if __name__ == '__main__':
     main()

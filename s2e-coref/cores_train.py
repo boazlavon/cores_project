@@ -145,14 +145,8 @@ def compute_metrics_f1(pred):
     pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
     labels_ids[labels_ids < 0] = tokenizer.pad_token_id
     label_str = tokenizer.batch_decode(labels_ids, skip_special_tokens=True)
+    return f1.compute(predictions=pred_str, references=label_str)
 
-    rouge_output = f1.compute(predictions=pred_str, references=label_str)["rouge2"].mid
-
-    return {
-        "rouge2_precision": round(rouge_output.precision, 4),
-        "rouge2_recall": round(rouge_output.recall, 4),
-        "rouge2_fmeasure": round(rouge_output.fmeasure, 4),
-    }
 
 train_batch_size=batch_size
 val_batch_size=batch_size
@@ -160,7 +154,7 @@ save_steps=500
 if 'bart' in model_type:
     train_batch_size=2
     val_batch_size=2
-    save_steps=2500
+    save_steps=5000
 
 print(f'train_batch_size={train_batch_size}, val_batch_size={val_batch_size}')
 # set training arguments - these params are not really tuned, feel free to change
@@ -180,13 +174,24 @@ training_args = Seq2SeqTrainingArguments(
     fp16=False, 
 )
 
-# instantiate trainer
-trainer = Seq2SeqTrainer(
-    model=model,
-    tokenizer=tokenizer,
-    args=training_args,
-    compute_metrics=compute_metrics,
-    train_dataset=train_df,
-    eval_dataset=val_df,
-)
+if 't5' in model_type:
+    # instantiate trainer
+    trainer = Seq2SeqTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=training_args,
+        compute_metrics=compute_metrics_f1,
+        train_dataset=train_df,
+        eval_dataset=val_df,
+    )
+else:
+    # instantiate trainer
+    trainer = Seq2SeqTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=training_args,
+        #compute_metrics=compute_metrics,
+        train_dataset=train_df,
+        eval_dataset=val_df,
+    )
 trainer.train()

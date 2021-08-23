@@ -117,8 +117,8 @@ def main():
     print("tokenizer: {}".format(len(tokenizer)))
     tokenizer.add_special_tokens({'additional_special_tokens' : additional_tokens})
 
-    encoder = BertGenerationEncoder.from_pretrained("bert-large-uncased")
-    decoder = BertGenerationDecoder.from_pretrained("bert-large-uncased", add_cross_attention=True, is_decoder=True)
+    encoder = BertGenerationEncoder.from_pretrained("bert-base-uncased")
+    decoder = BertGenerationDecoder.from_pretrained("bert-base-uncased", add_cross_attention=True, is_decoder=True)
     print("encoder: {}".format(str(encoder.get_input_embeddings())))
     print("decoder: {}".format(str(decoder.get_input_embeddings())))
 
