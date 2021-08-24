@@ -19,7 +19,7 @@ os.environ["PYTHONUNBUFFERED"] = '1'
 
 batch_size=16
 proj_dir = r'.'
-data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
+data_dir = os.path.join(proj_dir, 'coref_data')
 
 model_type = sys.argv[1]
 if model_type not in ('bart', 'bert', 't5', 'init_t5', 'init_bert', 'init_bart'):
@@ -30,7 +30,6 @@ model_type_no_init = model_type.replace('init_', '')
 training_dataset_path = os.path.join(data_dir, f'{model_type_no_init}_train_dataset.pkl')
 val_dataset_path = os.path.join(data_dir, f'{model_type_no_init}_val_dataset.pkl')
 checkpoints_dir = os.path.join(proj_dir, f'{model_type}_checkpoints')
-cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
 
 init_w = False
 if 'init' in model_type:

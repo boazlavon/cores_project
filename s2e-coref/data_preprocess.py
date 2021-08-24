@@ -16,8 +16,7 @@ encoder_max_length=128
 decoder_max_length=128
 
 proj_dir = r'.'
-data_dir = os.path.join(proj_dir, 'bert2bert_coref_data')
-cache_dir = os.path.join(proj_dir, 'bert2bert_cache')
+data_dir = os.path.join(proj_dir, 'coref_data')
 
 model_type = sys.argv[1]
 if model_type not in ('bert', 't5', 'bart'):
