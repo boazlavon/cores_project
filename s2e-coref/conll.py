@@ -36,19 +36,36 @@ def output_conll(input_file, output_file, predictions, subtoken_map):
         prediction_map[doc_key] = (start_map, end_map, word_map)
 
     word_index = 0
+    exist=True
+    keys_count=0
+    exist_keys_count=0
     for line in input_file.readlines():
         row = line.split()
         if len(row) == 0:
-            output_file.write("\n")
+            if exist:
+                output_file.write("\n")
         elif row[0].startswith("#"):
             begin_match = re.match(BEGIN_DOCUMENT_REGEX, line)
             if begin_match:
                 doc_key = get_doc_key(begin_match.group(1), begin_match.group(2))
-                start_map, end_map, word_map = prediction_map[doc_key]
+                keys_count += 1
+                try:
+                    start_map, end_map, word_map = prediction_map[doc_key]
+                    exist=True
+                    exist_keys_count +=1
+                except:
+                    #logger.warning(f"{doc_key} don't exist")
+                    exist=False
+                    continue
                 word_index = 0
-            output_file.write(line)
-            output_file.write("\n")
+            if exist: # for endline
+                output_file.write(line)
+                output_file.write("\n")
+            else:
+                continue
         else:
+            if not exist:
+                continue
             assert get_doc_key(row[0], row[1]) == doc_key
             coref_list = []
             if word_index in end_map:
@@ -69,10 +86,13 @@ def output_conll(input_file, output_file, predictions, subtoken_map):
             output_file.write("   ".join(row))
             output_file.write("\n")
             word_index += 1
+    keys_prec = 100.0 * exist_keys_count / keys_count
+    logger.info(f"Keys: {keys_prec}% from the test set")
 
 
 def official_conll_eval(gold_path, predicted_path, metric, official_stdout=True):
     cmd = ["reference-coreference-scorers/scorer.pl", metric, gold_path, predicted_path, "none"]
+    logger.info(cmd)
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     stdout, stderr = process.communicate()
     process.wait()

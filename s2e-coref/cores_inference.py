@@ -191,7 +191,6 @@ def execute_model(input_str, model, tokenizer, beam_size):
     return model_output_str
 
 def inference_example(model, tokenizer, words, model_output_str=None):
-
     beam_size = int(sys.argv[3])
     model.config.no_repeat_ngram_size = None
     # Suprise ! put the output mentions and check of good it good clustering only
