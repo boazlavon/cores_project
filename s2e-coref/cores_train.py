@@ -1,6 +1,7 @@
 from transformers import BertTokenizerFast
 from transformers import T5Tokenizer
 from transformers import BartForConditionalGeneration, BartTokenizer
+from transformers.models.bart.modeling_bart import shift_tokens_right
 
 from cores_tokens import CoresDatasetPreProcessor
 import datasets
@@ -12,7 +13,7 @@ import sys
 
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, BertConfig, BertTokenizer
 from transformers import BertGenerationConfig, BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, EncoderDecoderConfig
-from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer
+from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer, TrainingArguments, Trainer
 from transformers import T5ForConditionalGeneration
 
 os.environ["PYTHONUNBUFFERED"] = '1'
@@ -29,7 +30,8 @@ if model_type not in ('bart', 'bert', 't5', 'init_t5', 'init_bert', 'init_bart')
 model_type_no_init = model_type.replace('init_', '')
 training_dataset_path = os.path.join(data_dir, f'{model_type_no_init}_train_dataset.pkl')
 val_dataset_path = os.path.join(data_dir, f'{model_type_no_init}_val_dataset.pkl')
-checkpoints_dir = os.path.join(proj_dir, f'{model_type}_checkpoints')
+batch_size = int(sys.argv[2])
+checkpoints_dir = os.path.join(proj_dir, f'{model_type}_{batch_size}_checkpoints')
 
 init_w = False
 if 'init' in model_type:
@@ -42,6 +44,7 @@ if os.path.isdir(checkpoints_dir):
         checkpoints.sort()
         latest_checkpoint = checkpoints[-1]
         latest_checkpoint = os.path.join(checkpoints_dir, latest_checkpoint)
+latest_checkpoint = None
 
 print(f'Training {model_type} Model!')
 print(f'Loading Training Dataset: {training_dataset_path}')
@@ -102,50 +105,62 @@ else:
             print('Init Pre-Trained Model Weights')
             model.init_weights()
 
-    # Generic configs
-    # set special tokens
-    model.config.eos_token_id = tokenizer.eos_token_id
-    model.config.pad_token_id = tokenizer.pad_token_id
+from sklearn.metrics import precision_recall_fscore_support
+def compute_metrics_f1(pred):
+    labels = pred.label_ids
+    preds = pred.predictions
 
-    # sensible parameters for beam search
-    model.config.max_length = 128
-    model.config.min_length = 40
-    #model.config.no_repeat_ngram_size = 3
-    model.config.early_stopping = True
-    model.config.length_penalty = 2.0
-    model.config.num_beams = 4
-
-# load rouge for validation
-rouge = datasets.load_metric("rouge")
-f1 = datasets.load_metric("f1")
-
-def compute_metrics(pred):
-    labels_ids = pred.label_ids
-    pred_ids = pred.predictions
-
-    # all unnecessary tokens are removed
-    pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-    labels_ids[labels_ids < 0] = tokenizer.pad_token_id
-    label_str = tokenizer.batch_decode(labels_ids, skip_special_tokens=True)
-
-    rouge_output = rouge.compute(predictions=pred_str, references=label_str, rouge_types=["rouge2"])["rouge2"].mid
-
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
     return {
-        "rouge2_precision": round(rouge_output.precision, 4),
-        "rouge2_recall": round(rouge_output.recall, 4),
-        "rouge2_fmeasure": round(rouge_output.fmeasure, 4),
+        'f1': f1,
+        'precision': precision,
+        'recall': recall
     }
 
-def compute_metrics_f1(pred):
-    labels_ids = pred.label_ids
-    pred_ids = pred.predictions
+if 'bart' in model_type:
+    logging_dir=os.path.join(checkpoints_dir, 'logs')
+    try:
+        os.mkdir(logging_dir)
+    except:
+        pass
+    batch_size = int(sys.argv[2])
+    training_args = TrainingArguments(
+                        output_dir=checkpoints_dir,          
+                        evaluation_strategy="steps",
+                        num_train_epochs=1,           
+                        per_device_train_batch_size=batch_size, 
+                        per_device_eval_batch_size=1,   
+                        logging_steps=500,  # set to 1000 for full training
+                        save_steps=2500,  # set to 500 for full training
+                        warmup_steps=500,               
+                        weight_decay=0.01,              
+                        logging_dir=logging_dir,
+                        eval_steps=50000,  # set to 8000 for full training
+                        save_total_limit=5,
+                        overwrite_output_dir=True
+                        )
+    trainer = Trainer(
+                  model=model,                       
+                  args=training_args,                  
+                  train_dataset=train_df,
+                  eval_dataset=val_df,
+                  compute_metrics=compute_metrics_f1
+    )
+    trainer.train()
+    sys.exit(0)
 
-    # all unnecessary tokens are removed
-    pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-    labels_ids[labels_ids < 0] = tokenizer.pad_token_id
-    label_str = tokenizer.batch_decode(labels_ids, skip_special_tokens=True)
-    return f1.compute(predictions=pred_str, references=label_str)
+# Generic configs
+# set special tokens
+# model.config.eos_token_id = tokenizer.eos_token_id
+# model.config.pad_token_id = tokenizer.pad_token_id
 
+# sensible parameters for beam search
+#model.config.max_length = 128
+#model.config.early_stopping = True
+#model.config.num_beams = 4
+#model.config.min_length = 40
+#model.config.no_repeat_ngram_size = 3
+#model.config.length_penalty = 2.0
 
 train_batch_size=batch_size
 val_batch_size=batch_size
@@ -173,24 +188,13 @@ training_args = Seq2SeqTrainingArguments(
     fp16=False, 
 )
 
-if 't5' in model_type:
-    # instantiate trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        compute_metrics=compute_metrics_f1,
-        train_dataset=train_df,
-        eval_dataset=val_df,
-    )
-else:
-    # instantiate trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        #compute_metrics=compute_metrics,
-        train_dataset=train_df,
-        eval_dataset=val_df,
-    )
+# instantiate trainer
+trainer = Seq2SeqTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    args=training_args,
+    compute_metrics=compute_metrics_f1,
+    train_dataset=train_df,
+    eval_dataset=val_df,
+)
 trainer.train()

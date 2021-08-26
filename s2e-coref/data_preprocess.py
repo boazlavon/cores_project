@@ -2,6 +2,9 @@ from cores_tokens import CoresDatasetPreProcessor
 from transformers import BertTokenizerFast
 from transformers import T5Tokenizer, BartTokenizer
 from datasets import Dataset, concatenate_datasets
+from transformers.models.bart.modeling_bart import shift_tokens_right
+from transformers import BartForConditionalGeneration, BartTokenizer
+
 import datasets
 import pickle
 import random
@@ -23,26 +26,25 @@ if model_type not in ('bert', 't5', 'bart'):
     print('Invalid Model Type')
     sys.exit(0)
 
-raw_data_path = sys.argv[2]
-if not os.path.exists(raw_data_path):
-    print(f'Raw Data file isn\'t exist: {raw_data_path}')
+training_builder_path = sys.argv[2]
+if not os.path.exists(training_builder_path):
+    print(f'Training Builder: {training_builder_path} dont exist')
     sys.exit(0)
 
-raw_data_file = os.path.basename(raw_data_path)
-is_test=False
-if 'test' in raw_data_file:
-    is_test=True
-print(f'Raw data file: {raw_data_file} is_test={is_test}')
+val_builder_path = sys.argv[3]
+if not os.path.exists(val_builder_path):
+    print(f'Validation Builder: {val_builder_path} dont exist')
+    sys.exit(0)
 
-#raw_data_file = 'train.english.jsonlines'
-#raw_data_path = os.path.join(data_dir, raw_data_file)
-dataset_builder_path = f'{raw_data_path}.builder.{model_type}.pkl'
-training_dataset_path = os.path.join(data_dir, f'{model_type}_{raw_data_file}_train_dataset.pkl')
-val_dataset_path = os.path.join(data_dir, f'{model_type}_{raw_data_file}_val_dataset.pkl')
+training_dataset_path = os.path.join(data_dir, f'{model_type}_train_dataset.pkl')
+val_dataset_path = os.path.join(data_dir, f'{model_type}_val_dataset.pkl')
 if os.path.exists(training_dataset_path):
-    print(f'{raw_data_path} already exists')
+    print(f'{training_dataset_path} already exists')
     sys.exit(0)
 
+if os.path.exists(val_dataset_path):
+    print(f'{val_dataset_path} already exists')
+    sys.exit(0)
 if model_type == 'bert':
     tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
     tokenizer.bos_token = tokenizer.cls_token
@@ -56,50 +58,60 @@ cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
 tokenizer.add_tokens(cores_tokens)
 tokenizer.model_max_length = 128
 
-if os.path.exists(dataset_builder_path):
-    with open(dataset_builder_path, 'rb') as f:
-        print("Loading Pre-Processor")
-        builder = pickle.load(f)
-else:
-    print(f"Building New Pre-Processor: {dataset_builder_path}")
-    builder = CoresDatasetPreProcessor(raw_data_path, tokenizer, max_seq_length=decoder_max_length, is_test=is_test)
-    with open(dataset_builder_path, 'wb') as f:
-        pickle.dump(builder, f)
-        print(f"Saved: {dataset_builder_path}")
+try:
+    print("Loading Training Pre-Processor")
+    with open(training_builder_path, 'rb') as f:
+        train_builder = pickle.load(f)
+except:
+    print(f"Please building New Pre-Processor: {training_builder_path} cores_tokens.py/cores_tokens_test.py")
 
-if is_test:
-    print(f"ITS A TEST FILE - NOT Building Training & Validation Datasets for {model_type}")
-    print('Exit')
-    sys.exit(0)
+try:
+    print("Loading Validation Pre-Processor")
+    with open(val_builder_path, 'rb') as f:
+        val_builder = pickle.load(f)
+except:
+    print(f"Please building New Pre-Processor: {training_builder_path} cores_tokens.py/cores_tokens_test.py")
+
+#builder = CoresDatasetPreProcessor(raw_data_path, tokenizer, max_seq_length=decoder_max_length)
+#training_builder_path = os.path.basename(training_builder_path)
+#training_builder_path = os.path.join('.', 'builders', training_builder_path)
+#with open(training_builder_path, 'wb') as f:
+#    pickle.dump(builder, f)
+#    print(f"Saved: {training_builder_path}")
+#if True:
+#    print(f"ITS A TEST FILE - NOT Building Training & Validation Datasets for {model_type}")
+#    print('Exit')
+#    sys.exit(0)
 
 print(f"Building Training & Validation Datasets for {model_type}")
 print("Split Training & Validation")
 # Make sure that same chunks are used in mentions and clusters validation & training.
-mentions_df  = Dataset.from_pandas(builder.mentions_df)
-clusters_df  = Dataset.from_pandas(builder.clusters_df)
-#mentions_df  = mentions_df.select(range(30))
-#clusters_df  = clusters_df.select(range(30))
-mentions_idxs = mentions_df['idx']
-random.shuffle(mentions_idxs)
-train_idxs_count = int((1 - test_size) * len(mentions_idxs))
-train_idxs = mentions_idxs[:train_idxs_count]
-val_idxs   = mentions_idxs[train_idxs_count:]
+mentions_df_train  = Dataset.from_pandas(train_builder.mentions_df)
+clusters_df_train  = Dataset.from_pandas(train_builder.clusters_df)
+mentions_df_val  = Dataset.from_pandas(val_builder.mentions_df)
+clusters_df_val  = Dataset.from_pandas(val_builder.clusters_df)
 
-mentions_df_train = mentions_df.filter(lambda example : example['idx'] in train_idxs )
-print(len(mentions_df_train))
-mentions_df_val   = mentions_df.filter(lambda example : example['idx'] in val_idxs )
-print(len(mentions_df_val))
+if model_type == 'bart':
+    model = BartForConditionalGeneration.from_pretrained('facebook/bart-large', cache_dir='./cache')
 
-clusters_df_train = clusters_df.filter(lambda example : example['idx'] in train_idxs )
-print(len(clusters_df_train))
-
-clusters_df_val   = clusters_df.filter(lambda example : example['idx'] in val_idxs )
-print(len(clusters_df_val))
-
-# Validate the clusters df
-print((1.0 * len(clusters_df_val)) / (len(clusters_df_train) + len(clusters_df_val)))
-if (set(clusters_df_val["idx"]) & set(clusters_df_train["idx"])):
-    raise ValueError('Invalid Split!')
+def convert_to_features(example_batch):
+    global model
+    input_encodings  = tokenizer.batch_encode_plus(example_batch['input_str'],  padding="max_length", truncation=True, 
+                                                   max_length=encoder_max_length, return_tensors="pt")
+    target_encodings = tokenizer.batch_encode_plus(example_batch['output_str'], padding="max_length", truncation=True, 
+                                                   max_length=decoder_max_length, return_tensors="pt")
+                
+    labels = target_encodings['input_ids']
+    decoder_input_ids = shift_tokens_right(labels, model.config.pad_token_id, model.config.decoder_start_token_id)
+    labels[labels[:, :] == model.config.pad_token_id] = -100
+                                
+    encodings = {
+        'input_ids': input_encodings['input_ids'].tolist(),
+        'attention_mask': input_encodings['attention_mask'].tolist(),
+        'decoder_input_ids': decoder_input_ids.tolist(),
+        'labels': labels.tolist(),
+    }
+    return encodings
 
 def process_cores_data_to_model_inputs(batch):
   # tokenize the inputs and labels
@@ -108,8 +120,6 @@ def process_cores_data_to_model_inputs(batch):
 
   batch["input_ids"] = inputs.input_ids
   batch["attention_mask"] = inputs.attention_mask
-  batch["decoder_input_ids"] = outputs.input_ids
-  batch["decoder_attention_mask"] = outputs.attention_mask
   batch["labels"] = outputs.input_ids.copy()
 
   # because BERT automatically shifts the labels, the labels correspond exactly to `decoder_input_ids`. 
@@ -117,72 +127,32 @@ def process_cores_data_to_model_inputs(batch):
   batch["labels"] = [[-100 if token == tokenizer.pad_token_id else token for token in labels] for labels in batch["labels"]]
   return batch
 
+conver_func=process_cores_data_to_model_inputs
+columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"]
+batched=True
+if model_type == 'bart':
+    conver_func=convert_to_features
+    columns.remove("decoder_attention_mask")
+    batched=False
+
 print("Converting to tensors")
-mentions_df_train = mentions_df_train.map(
-    process_cores_data_to_model_inputs, 
-    batched=True, 
-    batch_size=batch_size, 
-    remove_columns=['idx', 'input_str', 'output_str']
-)
-mentions_df_train.set_format(
-    type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"],
-)
+mentions_df_train = mentions_df_train.map(conver_func, batched=True, remove_columns=['idx', 'input_str', 'output_str'])
+mentions_df_train.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
 
-mentions_df_val = mentions_df_val.map(
-    process_cores_data_to_model_inputs, 
-    batched=True, 
-    batch_size=batch_size, 
-    remove_columns=['idx', 'input_str', 'output_str']
-)
-mentions_df_val.set_format(
-    type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"],
-)
+mentions_df_val = mentions_df_val.map(conver_func, batched=True, remove_columns=['idx', 'input_str', 'output_str'])
+mentions_df_val.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
 
-clusters_df_train = clusters_df_train.map(
-    process_cores_data_to_model_inputs, 
-    batched=True, 
-    batch_size=batch_size, 
-    remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str']
-)
-clusters_df_train.set_format(
-    type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"],
-)
+clusters_df_train = clusters_df_train.map(conver_func, batched=True, remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
+clusters_df_train.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
 
-clusters_df_val = clusters_df_val.map(
-    process_cores_data_to_model_inputs, 
-    batched=True, 
-    batch_size=batch_size, 
-    remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str']
-)
-clusters_df_val.set_format(
-    type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"],
-)
-
-print(clusters_df_train)
-print(clusters_df_val)
+clusters_df_val = clusters_df_val.map(conver_func, batched=True, remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
+clusters_df_val.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
 
 print(mentions_df_train["input_ids"].shape)
 print(mentions_df_val["input_ids"].shape)
 print(clusters_df_train["input_ids"].shape)
 print(clusters_df_val["input_ids"].shape)
 print()
-
-print("Exdending Mentions Dataset")
-# I want to make sure that durring training each batch will have equal amount of mentions and clusters examples.
-print(len(mentions_df_train))
-print(len(clusters_df_train))
-rate = len(clusters_df_train) / len(mentions_df_train)
-print(f"Clusters is bigger {rate} times that mentions")
-rate = int(rate / 2.0)
-#print(f"Extending mentions by {rate}")
-
-extended_mentions_df = mentions_df_train
-#for i in range(rate):
-#    extended_mentions_df = concatenate_datasets([extended_mentions_df, mentions_df_train])
-
-print(len(extended_mentions_df))
-print(len(clusters_df_train))
-print(int(len(clusters_df_train) / len(extended_mentions_df)))
 
 train_df = datasets.concatenate_datasets([mentions_df_train, clusters_df_train])
 val_df = datasets.concatenate_datasets([mentions_df_val, clusters_df_val])

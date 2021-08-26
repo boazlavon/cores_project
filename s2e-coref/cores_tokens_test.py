@@ -45,8 +45,57 @@ class CoresDatasetPreProcessorTest(object):
         self.tokenizer = tokenizer
         print(f"Reading dataset from {test_data_path}")
         self.examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
-        self.paragraph_examples = self._split_to_paragraphs(self.examples)
+        self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.examples)
         self.coref_examples = self._tokenize(self.paragraph_examples)
+        _, self.cluster_examples = _binary_clustering_tokenize(self.mentions_examples)
+
+    def _binary_clustering_tokenize(self, examples):
+        cluster_examples = []
+        num_examples_filtered = 0
+        #for (idx, paragraph_id, words, clusters) in examples:
+        for (idx, doc_key, paragraph_id, words, clusters, _) in mentions_examples:
+            words = flatten_list_of_lists(words)
+            
+            current_cluster_examples = []
+            mentions = sum([len(c) for c in clusters])
+            for c_i, cluster in enumerate(clusters):
+                try:
+                    cluster_output_str = encode(words, clusters, cluster_tag=c_i, mention_tag=None)
+                    cluster_output_str = ' '.join(cluster_output_str)
+                    cluster_output   = self.tokenizer(cluster_output_str, padding="max_length")
+                    output_ids       = cluster_output['input_ids']
+                    output_ids       = torch.tensor(output_ids).unsqueeze(0)
+                    output_ids_mask  = cluster_output['attention_mask']
+                    output_ids_mask  = torch.tensor(output_ids_mask).unsqueeze(0)
+                except:
+                    num_examples_filtered += len(cluster)
+                    continue
+                    
+                if 0 < self.max_seq_length < output_ids.shape[1]:
+                    num_examples_filtered += len(cluster)
+                    continue
+
+                for mention in cluster:
+                    try:
+                        mention_input_str   = encode(words, clusters, cluster_tag=c_i, mention_tag=mention)
+                        mention_input_str   = ' '.join(mention_input_str)
+                        mention_input   = self.tokenizer(mention_input_str, padding="max_length")
+                        input_ids       = mention_input['input_ids']
+                        input_ids       = torch.tensor(input_ids).unsqueeze(0)
+                        input_ids_mask  = mention_input['attention_mask']
+                        input_ids_mask  = torch.tensor(input_ids_mask).unsqueeze(0)
+                    except Exception as e:
+                        num_examples_filtered += 1
+                        continue
+
+                    if 0 < self.max_seq_length < input_ids.shape[1]:
+                        num_examples_filtered += 1
+                        continue
+
+                    current_cluster_examples.append((doc_key, idx, paragraph_id, c_i, mention, mention_input_str, cluster_output_str))
+            print(f"clusters: idx = {idx} paragraph_id = {paragraph_id} mention_examples = {len(current_cluster_examples)} / {mentions}")
+            cluster_examples.extend(current_cluster_examples)
+        return num_examples_filtered, cluster_examples
 
     def to_ontonotes(self, ontonotes_path):
         with open(ontonotes_path, 'w') as f:
@@ -110,11 +159,8 @@ class CoresDatasetPreProcessorTest(object):
             coref_examples[(doc_key, paragraph_id)] = (end_token_idx_to_word_idx, token_ids, new_clusters, 
                                                        word_idx_to_start_token_idx, word_idx_to_end_token_idx)
             for idx, word in enumerate(words):
-                try:
-                    x = word_idx_to_start_token_idx[idx]
-                    x = word_idx_to_end_token_idx[idx]
-                except:
-                    import ipdb; ipdb.set_trace()
+                x = word_idx_to_start_token_idx[idx]
+                x = word_idx_to_end_token_idx[idx]
         return coref_examples
 
     def _parse_jsonlines(self, test_data_path):
@@ -129,7 +175,10 @@ class CoresDatasetPreProcessorTest(object):
                 input_words = d["sentences"]
                 clusters = d["clusters"]
                 speakers = d["speakers"]
-                conll_lines = d["full_sentences"]
+                try:
+                    conll_lines = d["full_sentences"]
+                except:
+                    conll_lines = 'EMPTY!'
                 max_mention_num = max(max_mention_num, len(flatten_list_of_lists(clusters)))
                 max_cluster_size = max(max_cluster_size, max(len(cluster) for cluster in clusters) if clusters else 0)
                 max_num_clusters = max(max_num_clusters, len(clusters) if clusters else 0)
@@ -182,19 +231,20 @@ class CoresDatasetPreProcessorTest(object):
                 continue
             break
             print('Done')
-        return w, words_str, new_clusters, trunc_sentences_count
+        return w, words_str, new_clusters, trunc_sentences_count, entity_mentions
 
     def _split_to_paragraphs(self, examples):
         paragraph_examples = []
+        mentions_examples = []
         idx = 0
         for doc_key, (words, clusters, speakers, conll_lines) in examples.items():
             paragraph_id = 0
-            new_words, words_str, new_clusters, trunc_sentences_count = self._process_example(words, clusters)
+            new_words, words_str, new_clusters, trunc_sentences_count, entity_mentions = self._process_example(words, clusters)
             new_speakers = speakers[:len(new_words)]
             new_conll_lines = conll_lines[:len(new_words)]
 
             paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines))
-
+            mentions_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, entity_mentions))
             trunced_length = len(new_words)
             print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
             while trunced_length <  len(words):
@@ -208,7 +258,7 @@ class CoresDatasetPreProcessorTest(object):
                                   if start >= full_trunced_length and end >= full_trunced_length] for cluster in clusters ]
                 remain_clusters = [ cluster for cluster in remain_clusters if cluster ]
 
-                new_words, words_str, new_clusters, trunc_sentences_count = self._process_example(remain_words, remain_clusters)
+                new_words, words_str, new_clusters, trunc_sentences_count, entity_mentions = self._process_example(remain_words, remain_clusters)
                 new_speakers = remain_speakers[:len(new_words)]
                 new_conll_lines = remain_conll_lines[:len(new_words)]
                 
@@ -216,6 +266,7 @@ class CoresDatasetPreProcessorTest(object):
                 trunced_length += len(new_words)
                 if new_clusters:
                     paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines))
+                    mentions_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, entity_mentions))
                     print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
                 else:
                     print(f"IGNORED mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
@@ -229,7 +280,7 @@ class CoresDatasetPreProcessorTest(object):
                     break
             idx += 1
 
-        return paragraph_examples
+        return paragraph_examples, mentions_examples
 
 
     def evaluate(self, inference_dir, official=True):
@@ -261,7 +312,7 @@ class CoresDatasetPreProcessorTest(object):
                 with open(inference_results, 'rb') as f:
                     _, _, untok_predicted_clusters = pickle.load(f)
             except:
-                #print(f'{inference_results} dont exist. continue!')
+                print(f'{inference_results} dont exist. continue!')
                 continue
 
             # tokenize predict_clusters with map.
@@ -313,7 +364,7 @@ class CoresDatasetPreProcessorTest(object):
 def create_datasets():
     # path
     model_type = sys.argv[1]
-    if model_type not in ('bert', 't5'):
+    if model_type not in ('bert', 't5', 'bart'):
         print('Invalid Model Type')
         sys.exit(0)
 
@@ -334,12 +385,12 @@ def create_datasets():
     tokenizer.model_max_length = 128
 
     filename = os.path.basename(test_data_path)
-    builders_dir = os.path.join(r'.', 'builders')
+    builders_dir = os.path.join(r'.', 'new_builders')
     try:
         os.mkdir(builders_dir)
     except:
         pass
-    dataset_builder_path = os.path.join(builders_dir, f'{filename}.test_builder.{model_type}.pkl')
+    dataset_builder_path = os.path.join(builders_dir, f'{filename}.builder.{model_type}.pkl')
     print(f'Builder path: {dataset_builder_path}')
 
     if os.path.exists(dataset_builder_path):
