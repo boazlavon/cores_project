@@ -44,16 +44,16 @@ class CoresDatasetPreProcessorTest(object):
 
         self.tokenizer = tokenizer
         print(f"Reading dataset from {test_data_path}")
-        self.examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
-        self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.examples)
-        self.coref_examples = self._tokenize(self.paragraph_examples)
-        _, self.cluster_examples = _binary_clustering_tokenize(self.mentions_examples)
+        self.original_examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
+        self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.original_examples)
+        self.coref_examples = self._tokenize()
+        _, self.cluster_examples = self._binary_clustering_tokenize(self.mentions_examples)
 
     def _binary_clustering_tokenize(self, examples):
         cluster_examples = []
         num_examples_filtered = 0
         #for (idx, paragraph_id, words, clusters) in examples:
-        for (idx, doc_key, paragraph_id, words, clusters, _) in mentions_examples:
+        for (idx, doc_key, paragraph_id, words, clusters, _) in self.mentions_examples:
             words = flatten_list_of_lists(words)
             
             current_cluster_examples = []
@@ -99,7 +99,7 @@ class CoresDatasetPreProcessorTest(object):
 
     def to_ontonotes(self, ontonotes_path):
         with open(ontonotes_path, 'w') as f:
-            for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines) in enumerate(self.paragraph_examples):
+            for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines, _) in enumerate(self.paragraph_examples):
                 # beggining line
                 if i > 0:
                     f.write('\n')
@@ -121,12 +121,21 @@ class CoresDatasetPreProcessorTest(object):
                         f.write(new_line)
                     f.write('\n')
                 f.write('#end document')
-            
-    def _tokenize(self, examples):
+
+    def unite_paragraph_clusters(self):
+        united_clusters = {}
+        for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines, index_shift) in enumerate(self.paragraph_examples):
+            orig_index_clusters = [ [[start + index_shift, end + index_shift] for start, end in cluster for cluster in clusters ]
+            if doc_key not in united_clusters:
+                united_clusters[doc_key] = []
+            united_clusters.extend(orig_index_clusters)
+        return united_clusters
+
+    def _tokenize(self):
         coref_examples = {}
 
         #for doc_key, words, clusters, speakers in examples:
-        for _, doc_key, paragraph_id, sentences, clusters, sentences_speakers, _ in examples:
+        for _, doc_key, paragraph_id, sentences, clusters, sentences_speakers, _, _ in self.paragraph_examples:
             words = flatten_list_of_lists(sentences)
             speakers = flatten_list_of_lists(sentences_speakers)
 
@@ -239,20 +248,22 @@ class CoresDatasetPreProcessorTest(object):
         idx = 0
         for doc_key, (words, clusters, speakers, conll_lines) in examples.items():
             paragraph_id = 0
+            index_shift = 0
+            total_length = len(flatten_list_of_lists(words))
             new_words, words_str, new_clusters, trunc_sentences_count, entity_mentions = self._process_example(words, clusters)
             new_speakers = speakers[:len(new_words)]
             new_conll_lines = conll_lines[:len(new_words)]
-
-            paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines))
+            paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines, index_shift))
             mentions_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, entity_mentions))
             trunced_length = len(new_words)
-            print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
+            print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)} shift = {index_shift} / {total_length}")
             while trunced_length <  len(words):
                 remain_words       = words[trunced_length:]
                 remain_speakers    = speakers[trunced_length:]
                 remain_conll_lines = conll_lines[trunced_length:]
 
                 full_trunced_length = len(flatten_list_of_lists(new_words))
+                index_shift += full_trunced_length # the length of the sentence so it will be possible to restore the indexes to original sentence
 
                 remain_clusters = [ [[start - full_trunced_length , end - full_trunced_length] for start, end in cluster \
                                   if start >= full_trunced_length and end >= full_trunced_length] for cluster in clusters ]
@@ -265,11 +276,11 @@ class CoresDatasetPreProcessorTest(object):
                 paragraph_id += 1
                 trunced_length += len(new_words)
                 if new_clusters:
-                    paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines))
+                    paragraph_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines, index_shift))
                     mentions_examples.append((idx, doc_key, paragraph_id, new_words, new_clusters, entity_mentions))
-                    print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
+                    print(f"mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)} shift = {index_shift} / {total_length}")
                 else:
-                    print(f"IGNORED mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)}")
+                    print(f"IGNORED! mention: idx = {idx} doc_key = {doc_key} paragraph_id = {paragraph_id} sentences={trunced_length}/{len(words)} shift = {index_shift} / {total_length}")
 
                 if not new_words:
                     print(f"No New Words!")

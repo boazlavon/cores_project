@@ -52,7 +52,7 @@ if model_type == 'bert':
 if model_type == 't5':
     tokenizer = T5Tokenizer.from_pretrained("t5-small")
 if model_type == 'bart':
-    tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
+    tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
 
 cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
 tokenizer.add_tokens(cores_tokens)
@@ -92,7 +92,7 @@ mentions_df_val  = Dataset.from_pandas(val_builder.mentions_df)
 clusters_df_val  = Dataset.from_pandas(val_builder.clusters_df)
 
 if model_type == 'bart':
-    model = BartForConditionalGeneration.from_pretrained('facebook/bart-large', cache_dir='./cache')
+    model = BartForConditionalGeneration.from_pretrained('facebook/bart-base', cache_dir='./cache')
 
 def convert_to_features(example_batch):
     global model

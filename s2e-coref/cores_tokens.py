@@ -9,7 +9,7 @@ import datasets
 from datasets import Dataset, concatenate_datasets
 from datasets import Dataset, load_metric
 from utils import extract_mentions_to_predicted_clusters_from_clusters
-
+from transformers import BartForConditionalGeneration, BartTokenizer
 import torch
 import pandas as pd
 
@@ -254,10 +254,13 @@ class CoresDatasetPreProcessor(object):
                 remain_clusters = [ cluster for cluster in remain_clusters if cluster ]
                 new_words, words_str, new_clusters, entity_mentions, trunc_count = self._process_example(remain_words, remain_clusters)
                 chunk_id += 1
-                self.mention_examples.append((f"{idx}_{chunk_id}", words_str, entity_mentions))
-                trunced_examples.append((idx, chunk_id, new_words, new_clusters))
+                if new_clusters:
+                    self.mention_examples.append((f"{idx}_{chunk_id}", words_str, entity_mentions))
+                    trunced_examples.append((idx, chunk_id, new_words, new_clusters))
+                    print(f"mention: idx = {idx} chunk_id = {chunk_id}")
+                else:
+                    print(f"IGNORED! mention: idx = {idx} chunk_id = {chunk_id}")
                 trunc_length += len(new_words)
-                print(f"mention: idx = {idx} chunk_id = {chunk_id}")
                 if new_words == remain_words:
                     break
 
@@ -392,7 +395,7 @@ def test_encoder_decoder():
 def create_datasets():
     # path
     model_type = sys.argv[1]
-    if model_type not in ('bert', 't5'):
+    if model_type not in ('bert', 't5', 'bart'):
         print('Invalid Model Type')
         sys.exit(0)
 
@@ -408,12 +411,14 @@ def create_datasets():
         tokenizer.eos_token = tokenizer.sep_token
     if model_type == 't5':
         tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    if model_type == 'bart':
+        tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
     cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
     tokenizer.add_tokens(cores_tokens)
     tokenizer.model_max_length = 128
 
     filename = os.path.basename(training_data_path)
-    dataset_builder_path = f'{filename}.builder.{model_type}.pkl'
+    dataset_builder_path = os.path.join('.', 'builders', f'{filename}.builder.{model_type}.pkl')
     print(f'Builder path: {dataset_builder_path}')
 
     if os.path.exists(dataset_builder_path):
@@ -423,7 +428,7 @@ def create_datasets():
         builder = CoresDatasetPreProcessor(training_data_path, tokenizer, max_seq_length=128)
         with open(dataset_builder_path, 'wb') as f:
             pickle.dump(builder, f)
-    print("Success")
+            print(f"Success: {dataset_builder_path}")
 
 if __name__ == '__main__':
     create_datasets()
