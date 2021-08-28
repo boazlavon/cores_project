@@ -1,4 +1,5 @@
 import json
+import argparse
 import random
 import logging
 import os
@@ -125,8 +126,8 @@ class CoresDatasetPreProcessorTest(object):
     def unite_paragraph_clusters(self):
         united_clusters = {}
         for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines, index_shift) in enumerate(self.paragraph_examples):
-            orig_index_clusters = [ [[start + index_shift, end + index_shift] for start, end in cluster for cluster in clusters ]
-            if doc_key not in united_clusters:
+            orig_index_clusters = [[start + index_shift, end + index_shift] for start, end in cluster for cluster in clusters ]
+            if not doc_key in united_clusters:
                 united_clusters[doc_key] = []
             united_clusters.extend(orig_index_clusters)
         return united_clusters

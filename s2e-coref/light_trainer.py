@@ -104,12 +104,7 @@ args_dict.update({'model_name_or_path' : model_name_or_path, 'tokenizer_name_or_
 args = argparse.Namespace(**args_dict)
 
 checkpoints_dir = os.path.join(args.output_dir, 'checkpoints')
-cp_cb = pl.callbacks.ModelCheckpoint(dirpath=args.output_dir, filename='t5-{epoch:02d}-{val_loss:.2f}')
-    #dirpath=args.output_dir, monitor="val_loss", mode="min", 
-    #save_last=True,
-    #every_n_train_steps=5000,
-    #filename='t5_{epoch:02d}'
-    #)
+cp_cb = pl.callbacks.ModelCheckpoint(dirpath=args.output_dir, filename='t5-{epoch:02d}', save_last=True)
 
 train_params = dict(
     accumulate_grad_batches=args.gradient_accumulation_steps,
@@ -130,7 +125,7 @@ train_params = dict(
 
 set_seed(42)
 init_w = 'init' in model_type
-model = T5FineTuner(train_builder, val_builder, model_type, init_w, dropout, **args_dict)
+model = T5FineTuner(train_builder, val_builder, init_w, dropout, **args_dict)
 print(model)
 trainer = pl.Trainer(**train_params)
 trainer.fit(model)

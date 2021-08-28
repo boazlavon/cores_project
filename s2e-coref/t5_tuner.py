@@ -29,13 +29,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class T5FineTuner(pl.LightningModule):
-  def __init__(self, train_builder, val_builder, model_type, init_w, dropout, **kwargs):
+  def __init__(self, train_builder, val_builder, init_w, dropout, **kwargs):
     super(T5FineTuner, self).__init__()
     self.save_hyperparameters(kwargs)
     
-    if model_type == 't5':
-        self.model = T5ForConditionalGeneration.from_pretrained(self.hparams.model_name_or_path, dropout_rate=dropout, cache_dir='./cache')
-        self.tokenizer = T5Tokenizer.from_pretrained(self.hparams.tokenizer_name_or_path, cache_dir='./cache')
+    self.model = T5ForConditionalGeneration.from_pretrained(self.hparams.model_name_or_path, dropout_rate=dropout, cache_dir='./cache')
+    self.tokenizer = T5Tokenizer.from_pretrained(self.hparams.tokenizer_name_or_path, cache_dir='./cache')
 
     logging.info(f"Model Dropout: {self.model.config.dropout_rate}")
     cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
