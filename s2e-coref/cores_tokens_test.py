@@ -1,4 +1,5 @@
 import json
+import hashlib
 import argparse
 import random
 import logging
@@ -48,7 +49,7 @@ class CoresDatasetPreProcessorTest(object):
         print(f"Reading dataset from {test_data_path}")
         self.original_examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
         self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.original_examples)
-        self.coref_examples = self._tokenize()
+        self.coref_examples = self._paragraphs_tokenize()
         _, self.cluster_examples = self._binary_clustering_tokenize(self.mentions_examples)
 
     def print_paragraph_examples(self):
@@ -132,7 +133,7 @@ class CoresDatasetPreProcessorTest(object):
             cluster_examples.extend(current_cluster_examples)
         return num_examples_filtered, cluster_examples
 
-    def to_ontonotes(self, ontonotes_path):
+    def to_paragraphs_ontonotes(self, ontonotes_path):
         with open(ontonotes_path, 'w') as f:
             for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines, _) in enumerate(self.paragraph_examples):
                 # beggining line
@@ -166,7 +167,7 @@ class CoresDatasetPreProcessorTest(object):
             united_clusters.extend(orig_index_clusters)
         return united_clusters
 
-    def _tokenize(self):
+    def _paragraphs_tokenize(self):
         coref_examples = {}
 
         #for doc_key, words, clusters, speakers in examples:
@@ -329,7 +330,7 @@ class CoresDatasetPreProcessorTest(object):
         return paragraph_examples, mentions_examples
 
 
-    def evaluate(self, inference_dir, official=True):
+    def paragraphs_evaluate(self, inference_dir, official=True):
         mention_evaluator = MentionEvaluator()
         coref_evaluator = CorefEvaluator()
         doc_to_prediction = {}
@@ -340,26 +341,50 @@ class CoresDatasetPreProcessorTest(object):
         except:
             pass
         conll_golden_path = os.path.join(output_dir, 'eval_conll_gold_path')
-        self.to_ontonotes(conll_golden_path)
+        self.to_paragraphs_ontonotes(conll_golden_path)
 
         #for (doc_key, subtoken_maps), batch in eval_dataloader:
-        for _, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _ in self.paragraph_examples:
+        #for _,  doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, in self.paragraph_examples:
+        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, _ in self.paragraph_examples:
+            words = flatten_list_of_lists(sentences)
+            words = [w.lower() for w in words]
+            try:
+                words_str = ' '.join(words)
+            except UnicodeEncodeError:
+                print('Unicode is not supported')
+                continue
+
+            try:
+                input_words_str_md5 = hashlib.md5(words_str.encode('ascii')).hexdigest()
+            except:
+                input_words_str_md5 = hashlib.md5(words_str.encode('utf-8')).hexdigest()
+
+            # predict_clusters = load from file by doc_key and paragraph_id
+            # inference_dir
+            doc_key_dir = doc_key.replace('/', '#')
+            doc_key_dir = os.path.join(inference_dir, doc_key_dir)
+            inference_results = os.path.join(doc_key_dir, f'paragraph_{paragraph_id}.pkl')
+            if not os.path.isfile(inference_results):
+                print(f'{inference_results} dont exist. continue!')
+                continue
+
+            try:
+                with open(inference_results, 'rb') as f:
+                    results = pickle.load(f)
+                _, _, untok_predicted_clusters, pickled_input_words_str_md5, _, _, _ = results
+            except:
+                print(f'{inference_results} loading problem continue!')
+                continue
+
+            if pickled_input_words_str_md5 != input_words_str_md5:
+                print(f'Invalid MD5 for {inference_results}')
+                continue
+
             subtoken_maps, _, gold_clusters, word_idx_to_start_token_idx, word_idx_to_end_token_idx = self.coref_examples[(doc_key, paragraph_id)]
             gold_clusters = tuple([tuple(c) for c in gold_clusters])
 
             mention_to_gold_clusters = extract_mentions_to_predicted_clusters_from_clusters(gold_clusters)
             gold_mentions = tuple(mention_to_gold_clusters.keys())
-
-            # predict_clusters = load from file by doc_key and paragraph_id
-            # inference_dir
-            doc_key_file = doc_key.replace('/', '\\')
-            inference_results = os.path.join(inference_dir, f'{doc_key_file}_{paragraph_id}.pkl')
-            try:
-                with open(inference_results, 'rb') as f:
-                    _, _, untok_predicted_clusters = pickle.load(f)
-            except:
-                print(f'{inference_results} dont exist. continue!')
-                continue
 
             # tokenize predict_clusters with map.
             predicted_clusters = [ [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for

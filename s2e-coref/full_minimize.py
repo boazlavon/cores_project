@@ -191,7 +191,7 @@ def handle_line(line, document_state, language, labels, stats):
 
 
 def minimize_partition(input_path, language, extension, labels, stats):
-    output_path = f"{input_path}.jsonlines"
+    output_path = f"{input_path}.full.jsonlines"
     count = 0
     print("Minimizing {}".format(input_path))
     with open(input_path, "r") as input_file:

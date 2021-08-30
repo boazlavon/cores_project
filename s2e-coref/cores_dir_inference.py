@@ -509,11 +509,11 @@ def process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, m
             try:
                 with open(results_path, 'rb') as f:
                     results = pickle.load(f)
-                    pred_obj_clusters, cluster_pred_outputs, final_pred_clusters, pickled_input_words_str_md5, unmatched_mentions, words, clean_words_str = results
-                    if pickled_input_words_str_md5 == input_words_str_md5:
-                        print(f'Loaded {doc_key} : {paragraph_id}')
-                        print_results(final_pred_clusters, golden_clusters, words, unmatched_mentions)
-                        continue
+                pred_obj_clusters, cluster_pred_outputs, final_pred_clusters, pickled_input_words_str_md5, unmatched_mentions, words, clean_words_str = results
+                if pickled_input_words_str_md5 == input_words_str_md5:
+                    print(f'Loaded {doc_key} : {paragraph_id}')
+                    print_results(final_pred_clusters, golden_clusters, words, unmatched_mentions)
+                    continue
             except:
                 pass
 

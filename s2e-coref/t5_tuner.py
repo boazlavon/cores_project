@@ -33,8 +33,8 @@ class T5FineTuner(pl.LightningModule):
     super(T5FineTuner, self).__init__()
     self.save_hyperparameters(kwargs)
     
-    self.model = T5ForConditionalGeneration.from_pretrained(self.hparams.model_name_or_path, dropout_rate=dropout, cache_dir='./cache')
-    self.tokenizer = T5Tokenizer.from_pretrained(self.hparams.tokenizer_name_or_path, cache_dir='./cache')
+    self.model = T5ForConditionalGeneration.from_pretrained(self.hparams.model_name_or_path, dropout_rate=dropout)
+    self.tokenizer = T5Tokenizer.from_pretrained(self.hparams.tokenizer_name_or_path)
 
     logging.info(f"Model Dropout: {self.model.config.dropout_rate}")
     cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']

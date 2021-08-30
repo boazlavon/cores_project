@@ -1,4 +1,5 @@
 import json
+import  argparse
 import random
 import logging
 import os
@@ -33,9 +34,8 @@ NOT_IN_CLUSTER_TOKEN = '[[f]]'
 
 logger = logging.getLogger(__name__)
 
-def load_pickles():
+def load_pickles(dataset_builder_path):
     os.environ["PYTHONUNBUFFERED"] = '1'
-    dataset_builder_path = sys.argv[1]
     print(f'Builder path: {dataset_builder_path}')
     if not os.path.exists(dataset_builder_path):
         print(f'Please generate builder (cores_tokens_test.py script): {dataset_builder_path}')
@@ -45,20 +45,27 @@ def load_pickles():
     with open(dataset_builder_path, 'rb') as f:
         builder = pickle.load(f)
 
-    infer_dir = sys.argv[2]
-    if not os.path.isdir(infer_dir):
-        print('Please provide an inference directory')
-    return builder, infer_dir
+    return builder
 
 def eval():
     logging.basicConfig(level=logging.INFO)
-    builder, infer_dir = load_pickles()
-    official = True
-    if len(sys.argv) > 1:
-        if sys.argv[1] == 'f':
-          official=False
-            
-    builder.evaluate(infer_dir, official=official)
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument('--model', type=str)
+    parser.add_argument('--builder', type=str)
+    parser.add_argument('--beam', type=int)
+    parser.add_argument('--dropout', type=float)
+    parser.add_argument('--official', type=bool, default=True)
+    args = parser.parse_args(sys.argv[1:])
+    config = f'{args.dropout}'
+
+    proj_dir = r'.'
+    infer_main_dir = os.path.join(proj_dir, 'inference_results')
+    infer_dir = os.path.join(infer_main_dir, args.model, config, f'beam_{args.beam}')
+    if not os.path.isdir(infer_dir):
+        print('Please provide an inference directory: {infer_dir}')
+
+    builder = load_pickles(args.builder)
+    builder.paragraphs_evaluate(infer_dir, official=args.official)
 
 if __name__ == '__main__':
     eval()
