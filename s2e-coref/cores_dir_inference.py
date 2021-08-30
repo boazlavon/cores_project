@@ -315,7 +315,7 @@ def match_mention(mention, words, words_str, suffix_map):
         if span_idx > 0 and words_str[span_idx - 1] != ' ':
             i = span_idx
             continue
-        if span_idx < (len(words_str) - 1) and words_str[span_idx + 1] != ' ':
+        if span_idx + len(span_str) < (len(words_str) - 1) and words_str[span_idx + len(span_str)] != ' ':
             i = span_idx
             continue
 
