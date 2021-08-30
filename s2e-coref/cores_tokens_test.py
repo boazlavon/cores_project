@@ -14,6 +14,7 @@ from utils import extract_mentions_to_predicted_clusters_from_clusters
 from cores_tokens import encode
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
 from conll import evaluate_conll
+from transformers import BartForConditionalGeneration, BartTokenizer
 
 import torch
 import pandas as pd
@@ -49,6 +50,39 @@ class CoresDatasetPreProcessorTest(object):
         self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.original_examples)
         self.coref_examples = self._tokenize()
         _, self.cluster_examples = self._binary_clustering_tokenize(self.mentions_examples)
+
+    def print_paragraph_examples(self):
+        for main_doc_key, (words, main_clusters, speakers, conll_lines) in self.original_examples.items():
+           print('=======================')
+           print(f'Dockey: {main_doc_key}')
+           print('=======================')
+           words = flatten_list_of_lists(words)
+           words_str = ' '.join(words)
+           print(words_str)
+           print('=======================')
+           print('Golden:')
+           for cluster in main_clusters:
+               values_str = tuple([(' '.join(words[start : end + 1]), (start, end)) for start, end in cluster])
+               print(f'{values_str}')
+               print(f'{cluster}')
+           print('=======================')
+
+           for (idx, doc_key, paragraph_id, sentences, golden_clusters, _, conll_lines, _) in (self.paragraph_examples):
+               if main_doc_key != doc_key:
+                   continue
+               print('=======================')
+               print(f'Paragraph: {main_doc_key} : {paragraph_id}')
+               words = flatten_list_of_lists(sentences)
+               words_str = ' '.join(words)
+               print(f'Paragraph len: {len(words)}')
+               print(words_str)
+               print('=======================')
+               print('Golden:')
+               for cluster in golden_clusters:
+                   values_str = tuple([(' '.join(words[start : end + 1]), (start, end)) for start, end in cluster])
+                   print(f'{values_str}')
+               print('=======================')
+
 
     def _binary_clustering_tokenize(self, examples):
         cluster_examples = []
@@ -266,8 +300,8 @@ class CoresDatasetPreProcessorTest(object):
                 full_trunced_length = len(flatten_list_of_lists(new_words))
                 index_shift += full_trunced_length # the length of the sentence so it will be possible to restore the indexes to original sentence
 
-                remain_clusters = [ [[start - full_trunced_length , end - full_trunced_length] for start, end in cluster \
-                                  if start >= full_trunced_length and end >= full_trunced_length] for cluster in clusters ]
+                remain_clusters = [ [[start - index_shift , end - index_shift] for start, end in cluster \
+                                  if start >= index_shift and end >= index_shift] for cluster in clusters ]
                 remain_clusters = [ cluster for cluster in remain_clusters if cluster ]
 
                 new_words, words_str, new_clusters, trunc_sentences_count, entity_mentions = self._process_example(remain_words, remain_clusters)
@@ -392,6 +426,8 @@ def create_datasets():
         tokenizer.eos_token = tokenizer.sep_token
     if model_type == 't5':
         tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    if model_type == 'bart':
+        tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
     cores_tokens = ['<<', '>>', '[[u]]', '[[t]]', '[[f]]']
     tokenizer.add_tokens(cores_tokens)
     tokenizer.model_max_length = 128
@@ -414,6 +450,7 @@ def create_datasets():
         with open(dataset_builder_path, 'wb') as f:
             pickle.dump(builder, f)
         print(f"Saved Builder: {dataset_builder_path}")
+    builder.print_paragraph_examples()
 
 def load_pickles():
     os.environ["PYTHONUNBUFFERED"] = '1'

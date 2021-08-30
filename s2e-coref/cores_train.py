@@ -43,13 +43,12 @@ parser.add_argument('--model', type=str)
 parser.add_argument('--epoch', type=int)
 parser.add_argument('--dropout', type=float)
 args = parser.parse_args(sys.argv[1:])
-
 model_type = args.model
 if model_type not in ('bart', 'bert', 'init_bert', 'init_bart'):
     logging.error(f'Invalid Model Type {model_type}')
     sys.exit(0)
 
-DEFAULT_DROPOUT = {'bart' : 0.1, 'init_bart' : 0.1}
+DEFAULT_DROPOUT = {'bart' : 0.1, 'init_bart' : 0.1, 'bert' : 0.1, 'init_bert' : 0.1}
 dropout = DEFAULT_DROPOUT[model_type] #default bart config
 if args.dropout and args.dropout < 1 and args.dropout > 0:
     dropout = args.dropout
@@ -105,8 +104,8 @@ if latest_checkpoint:
 else:
     logging.info(f'Building new {model_type} from pre-trained model')
     if 'bert' in model_type:
-        encoder = BertGenerationEncoder.from_pretrained("bert-base-uncased")
-        decoder = BertGenerationDecoder.from_pretrained("bert-base-uncased", add_cross_attention=True, is_decoder=True)
+        encoder = BertGenerationEncoder.from_pretrained("bert-base-uncased", hidden_dropout_prob=dropout, attention_probs_dropout_prob=dropout)
+        decoder = BertGenerationDecoder.from_pretrained("bert-base-uncased", add_cross_attention=True, is_decoder=True, hidden_dropout_prob=dropout, attention_probs_dropout_prob=dropout)
         encoder.resize_token_embeddings(len(tokenizer))
         decoder.resize_token_embeddings(len(tokenizer))
         if init_w:
@@ -116,6 +115,8 @@ else:
         model = EncoderDecoderModel(encoder=encoder, decoder=decoder)
         model.config.vocab_size = model.config.decoder.vocab_size
         model.config.decoder_start_token_id = tokenizer.bos_token_id
+        logging.info(f"Encoder Dropout: {encoder.config.hidden_dropout_prob}, {encoder.config.attention_probs_dropout_prob}")
+        logging.info(f"Decoder Dropout: {decoder.config.hidden_dropout_prob}, {decoder.config.attention_probs_dropout_prob}")
     elif 't5' in model_type:
         model = T5ForConditionalGeneration.from_pretrained("t5-small")
         model.resize_token_embeddings(len(tokenizer))
@@ -128,14 +129,19 @@ else:
         if init_w:
             logging.info('Init Pre-Trained Model Weights')
             model.init_weights()
+        logging.info(f"Model Dropout: {model.config.dropout}")
 
-logging.info(f"Model Dropout: {model.config.dropout}")
 #model.config.dropout = dropout
 model.config.max_length = 128
 model.config.early_stopping = True
 model.config.num_beams = 4
-model.config.no_repeat_ngram_size = 2
+#model.config.no_repeat_ngram_size = 2
 #model.config.length_penalty = 2.0
+
+train_epoch = 4
+if args.epoch:
+    train_epoch = args.epoch
+logging.info(f'Training Epoch = {train_epoch}')
 
 if False:
     logging_dir=os.path.join(checkpoints_dir, 'logs')
@@ -144,9 +150,6 @@ if False:
     except:
         pass
 
-    train_epoch = 4
-    if args.epoch:
-        train_epoch = args.epoch
     training_args = TrainingArguments(
                         output_dir=checkpoints_dir,          
                         evaluation_strategy="steps",
@@ -204,6 +207,7 @@ else: # for BERT
         #warmup_steps=0,  # set to 2000 for full training
         #max_steps=40, # delete for full training
         #overwrite_output_dir=True,
+        num_train_epochs=train_epoch,
         save_total_limit=2,
         fp16=False, 
     )

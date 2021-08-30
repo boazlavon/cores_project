@@ -22,7 +22,7 @@ proj_dir = r'.'
 data_dir = os.path.join(proj_dir, 'coref_data')
 
 model_type = sys.argv[1]
-if model_type not in ('bert', 't5', 'bart'):
+if model_type not in ('bert', 'bart'):
     print('Invalid Model Type')
     sys.exit(0)
 
@@ -72,19 +72,9 @@ try:
 except:
     print(f"Please building New Pre-Processor: {training_builder_path} cores_tokens.py/cores_tokens_test.py")
 
-#builder = CoresDatasetPreProcessor(raw_data_path, tokenizer, max_seq_length=decoder_max_length)
-#training_builder_path = os.path.basename(training_builder_path)
-#training_builder_path = os.path.join('.', 'builders', training_builder_path)
-#with open(training_builder_path, 'wb') as f:
-#    pickle.dump(builder, f)
-#    print(f"Saved: {training_builder_path}")
-#if True:
-#    print(f"ITS A TEST FILE - NOT Building Training & Validation Datasets for {model_type}")
-#    print('Exit')
-#    sys.exit(0)
-
 print(f"Building Training & Validation Datasets for {model_type}")
 print("Split Training & Validation")
+
 # Make sure that same chunks are used in mentions and clusters validation & training.
 mentions_df_train  = Dataset.from_pandas(train_builder.mentions_df)
 clusters_df_train  = Dataset.from_pandas(train_builder.clusters_df)
@@ -94,7 +84,7 @@ clusters_df_val  = Dataset.from_pandas(val_builder.clusters_df)
 if model_type == 'bart':
     model = BartForConditionalGeneration.from_pretrained('facebook/bart-base', cache_dir='./cache')
 
-def convert_to_features(example_batch):
+def bart_process_data(example_batch):
     global model
     input_encodings  = tokenizer.batch_encode_plus(example_batch['input_str'],  padding="max_length", truncation=True, 
                                                    max_length=encoder_max_length, return_tensors="pt")
@@ -113,40 +103,38 @@ def convert_to_features(example_batch):
     }
     return encodings
 
-def process_cores_data_to_model_inputs(batch):
-  # tokenize the inputs and labels
-  inputs  = tokenizer(batch["input_str"],  padding="max_length", truncation=True, max_length=encoder_max_length)
-  outputs = tokenizer(batch["output_str"], padding="max_length", truncation=True, max_length=decoder_max_length)
+def bert_process_data(batch):
+    # tokenize the inputs and labels
+    inputs  = tokenizer(batch["input_str"],  padding="max_length", truncation=True, max_length=encoder_max_length)
+    outputs = tokenizer(batch["output_str"], padding="max_length", truncation=True, max_length=decoder_max_length)
+    batch["input_ids"] = inputs.input_ids
+    batch["attention_mask"] = inputs.attention_mask
+    batch["decoder_input_ids"] = outputs.input_ids
+    batch["decoder_attention_mask"] = outputs.attention_mask
+    batch["labels"] = outputs.input_ids.copy()
+    # because BERT automatically shifts the labels, the labels correspond exactly to `decoder_input_ids`.
+    # We have to make sure that the PAD token is ignored
+    batch["labels"] = [[-100 if token == tokenizer.pad_token_id else token for token in labels] for labels in batch["labels"]]
+    return batch
 
-  batch["input_ids"] = inputs.input_ids
-  batch["attention_mask"] = inputs.attention_mask
-  batch["labels"] = outputs.input_ids.copy()
-
-  # because BERT automatically shifts the labels, the labels correspond exactly to `decoder_input_ids`. 
-  # We have to make sure that the PAD token is ignored
-  batch["labels"] = [[-100 if token == tokenizer.pad_token_id else token for token in labels] for labels in batch["labels"]]
-  return batch
-
-conver_func=process_cores_data_to_model_inputs
-columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"]
-batched=True
+conver_func=bert_process_data
+final_columns=["input_ids", "attention_mask", "decoder_input_ids", "decoder_attention_mask", "labels"]
 if model_type == 'bart':
-    conver_func=convert_to_features
-    columns.remove("decoder_attention_mask")
-    batched=False
+    conver_func=bart_process_data
+    final_columns.remove("decoder_attention_mask")
 
 print("Converting to tensors")
 mentions_df_train = mentions_df_train.map(conver_func, batched=True, remove_columns=['idx', 'input_str', 'output_str'])
-mentions_df_train.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
+mentions_df_train.set_format(type="torch", columns=final_columns)
 
 mentions_df_val = mentions_df_val.map(conver_func, batched=True, remove_columns=['idx', 'input_str', 'output_str'])
-mentions_df_val.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
+mentions_df_val.set_format(type="torch", columns=final_columns)
 
 clusters_df_train = clusters_df_train.map(conver_func, batched=True, remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
-clusters_df_train.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
+clusters_df_train.set_format(type="torch", columns=final_columns)
 
 clusters_df_val = clusters_df_val.map(conver_func, batched=True, remove_columns=['idx', 'cluster_index', 'mention', 'input_str', 'output_str'])
-clusters_df_val.set_format(type="torch", columns=["input_ids", "attention_mask", "decoder_input_ids", "labels"])
+clusters_df_val.set_format(type="torch", columns=final_columns)
 
 print(mentions_df_train["input_ids"].shape)
 print(mentions_df_val["input_ids"].shape)

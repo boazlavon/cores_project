@@ -65,7 +65,7 @@ val_builder_path = input_args.val_builder_path
 with open(val_builder_path, 'rb') as f:
     val_builder = pickle.load(f)
 
-train_epoch=4
+train_epoch=8
 if input_args.epoch:
     train_epoch=input_args.epoch
 
@@ -131,5 +131,5 @@ trainer = pl.Trainer(**train_params)
 trainer.fit(model)
 
 time = str(int(time.time()))
-last_filename = os.path.join(output_dir, f'{model_type}_{time}')
+last_filename = os.path.join(output_dir, f'checkpoint_{model_type}_{time}')
 model.model.save_pretrained(last_filename)
