@@ -47,13 +47,16 @@ class CoresDatasetPreProcessorTest(object):
 
         self.tokenizer = tokenizer
         print(f"Reading dataset from {test_data_path}")
-        self.original_examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
-        self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.original_examples)
-        self.coref_examples = self._paragraphs_tokenize()
-        _, self.cluster_examples = self._binary_clustering_tokenize(self.mentions_examples)
+        self.document_examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(test_data_path)
+        self.paragraph_examples, self.mentions_examples = self._split_to_paragraphs(self.document_examples)
+        self.united_clusters = self.unite_paragraph_clusters()
+        self.tokenized_paragraph_examples = self._paragraphs_tokenize()
+        self.coref_examples = self.tokenized_paragraph_examples
+        self.tokenized_document_examples = self._document_tokenize()
+        #_, self.cluster_examples = self._binary_clustering_tokenize(self.mentions_examples)
 
     def print_paragraph_examples(self):
-        for main_doc_key, (words, main_clusters, speakers, conll_lines) in self.original_examples.items():
+        for main_doc_key, (words, main_clusters, speakers, conll_lines) in self.document_examples.items():
            print('=======================')
            print(f'Dockey: {main_doc_key}')
            print('=======================')
@@ -161,14 +164,65 @@ class CoresDatasetPreProcessorTest(object):
     def unite_paragraph_clusters(self):
         united_clusters = {}
         for i, (idx, doc_key, paragraph_id, sentences, clusters, _, conll_lines, index_shift) in enumerate(self.paragraph_examples):
-            orig_index_clusters = [[start + index_shift, end + index_shift] for start, end in cluster for cluster in clusters ]
+            orig_index_clusters = [[[start + index_shift, end + index_shift] for start, end in cluster] for cluster in clusters ]
             if not doc_key in united_clusters:
                 united_clusters[doc_key] = []
-            united_clusters.extend(orig_index_clusters)
+            united_clusters[doc_key].extend(orig_index_clusters)
+        for doc_key in united_clusters:
+            united_mentions = extract_mentions_to_predicted_clusters_from_clusters(united_clusters[doc_key])
+            united_mentions = set(united_mentions.keys())
+            _, golden_clusters, _, _ = self.document_examples[doc_key]
+            golden_mentions = extract_mentions_to_predicted_clusters_from_clusters(golden_clusters)
+            golden_mentions = set(golden_mentions.keys())
+            #assert united_mentions == golden_mentions
         return united_clusters
 
+    def _document_tokenize(self):
+        tokenized_document_examples = {}
+        lengths = []
+        num_examples_filtered = 0
+        for doc_key, (words, clusters, speakers, _) in self.document_examples.items():
+            words = flatten_list_of_lists(words)
+            speakers = flatten_list_of_lists(speakers)
+
+            word_idx_to_start_token_idx = dict()
+            word_idx_to_end_token_idx = dict()
+            end_token_idx_to_word_idx = [0]  # for <s>
+
+            token_ids = []
+            last_speaker = None
+            for idx, (word, speaker) in enumerate(zip(words, speakers)):
+                if last_speaker != speaker:
+                    speaker_prefix = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
+                                                                             add_special_tokens=False) + [SPEAKER_END]
+                    last_speaker = speaker
+                else:
+                    speaker_prefix = []
+                for _ in range(len(speaker_prefix)):
+                    end_token_idx_to_word_idx.append(idx)
+                token_ids.extend(speaker_prefix)
+                word_idx_to_start_token_idx[idx] = len(token_ids) + 1  # +1 for <s>
+                tokenized = self.tokenizer.encode(" " + word, add_special_tokens=False)
+                for _ in range(len(tokenized)):
+                    end_token_idx_to_word_idx.append(idx)
+                token_ids.extend(tokenized)
+                word_idx_to_end_token_idx[idx] = len(token_ids)  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
+
+            # BIG NO NO!
+            #if 0 < self.max_seq_length < len(token_ids):
+            #    num_examples_filtered += 1
+            #    continue
+
+            new_clusters = [
+                [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
+                cluster in clusters]
+            lengths.append(len(token_ids))
+            tokenized_document_examples[doc_key] = (end_token_idx_to_word_idx, token_ids, new_clusters, 
+                                                    word_idx_to_start_token_idx, word_idx_to_end_token_idx)
+        return tokenized_document_examples
+
     def _paragraphs_tokenize(self):
-        coref_examples = {}
+        tokenized_paragraph_examples = {}
 
         #for doc_key, words, clusters, speakers in examples:
         for _, doc_key, paragraph_id, sentences, clusters, sentences_speakers, _, _ in self.paragraph_examples:
@@ -201,12 +255,12 @@ class CoresDatasetPreProcessorTest(object):
                 [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
                 cluster in clusters]
 
-            coref_examples[(doc_key, paragraph_id)] = (end_token_idx_to_word_idx, token_ids, new_clusters, 
+            tokenized_paragraph_examples[(doc_key, paragraph_id)] = (end_token_idx_to_word_idx, token_ids, new_clusters, 
                                                        word_idx_to_start_token_idx, word_idx_to_end_token_idx)
             for idx, word in enumerate(words):
                 x = word_idx_to_start_token_idx[idx]
                 x = word_idx_to_end_token_idx[idx]
-        return coref_examples
+        return tokenized_paragraph_examples
 
     def _parse_jsonlines(self, test_data_path):
         examples = {}
@@ -335,7 +389,7 @@ class CoresDatasetPreProcessorTest(object):
         coref_evaluator = CorefEvaluator()
         doc_to_prediction = {}
         doc_to_subtoken_map = {}
-        output_dir = os.path.join(inference_dir, 'eval_output')
+        output_dir = os.path.join(inference_dir, 'paragrph_eval_output')
         try:
             os.mkdir(output_dir)
         except:
@@ -343,9 +397,7 @@ class CoresDatasetPreProcessorTest(object):
         conll_golden_path = os.path.join(output_dir, 'eval_conll_gold_path')
         self.to_paragraphs_ontonotes(conll_golden_path)
 
-        #for (doc_key, subtoken_maps), batch in eval_dataloader:
-        #for _,  doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, in self.paragraph_examples:
-        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, _ in self.paragraph_examples:
+        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, index_shift in self.paragraph_examples:
             words = flatten_list_of_lists(sentences)
             words = [w.lower() for w in words]
             try:
@@ -380,7 +432,7 @@ class CoresDatasetPreProcessorTest(object):
                 print(f'Invalid MD5 for {inference_results}')
                 continue
 
-            subtoken_maps, _, gold_clusters, word_idx_to_start_token_idx, word_idx_to_end_token_idx = self.coref_examples[(doc_key, paragraph_id)]
+            subtoken_maps, _, gold_clusters, word_idx_to_start_token_idx, word_idx_to_end_token_idx = self.tokenized_paragraph_examples[(doc_key, paragraph_id)]
             gold_clusters = tuple([tuple(c) for c in gold_clusters])
 
             mention_to_gold_clusters = extract_mentions_to_predicted_clusters_from_clusters(gold_clusters)
@@ -428,9 +480,116 @@ class CoresDatasetPreProcessorTest(object):
             print('Official avg F1: %.4f' % official_f1)
         return results
 
+    def get_united_predicted_clusters(self, inference_dir):
+        united_untok_predicted_clusters = {}
+        # iterate only over the keys from the monitor
+        done_keys, done_keys_ratio = monitor_inference(self.document_examples.keys(), inference_dir)
+        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, index_shift in self.paragraph_examples:
+            if doc_key not in done_keys:
+                continue
+            if doc_key not in self.document_examples:
+                print(f'Very strange! {doc_key}')
+                continue
+
+            words = flatten_list_of_lists(sentences)
+            words = [w.lower() for w in words]
+            try:
+                words_str = ' '.join(words)
+            except UnicodeEncodeError:
+                print('Unicode is not supported')
+                continue
+
+            try:
+                input_words_str_md5 = hashlib.md5(words_str.encode('ascii')).hexdigest()
+            except:
+                input_words_str_md5 = hashlib.md5(words_str.encode('utf-8')).hexdigest()
+
+            # predict_clusters = load from file by doc_key and paragraph_id
+            # inference_dir
+            doc_key_dir = doc_key.replace('/', '#')
+            doc_key_dir = os.path.join(inference_dir, doc_key_dir)
+            inference_results = os.path.join(doc_key_dir, f'paragraph_{paragraph_id}.pkl')
+            if not os.path.isfile(inference_results):
+                print(f'{inference_results} dont exist. continue!')
+                continue
+
+            try:
+                with open(inference_results, 'rb') as f:
+                    results = pickle.load(f)
+                _, _, untok_predicted_clusters, pickled_input_words_str_md5, _, _, _ = results
+            except:
+                print(f'{inference_results} loading problem continue!')
+                continue
+
+            if pickled_input_words_str_md5 != input_words_str_md5:
+                print(f'Invalid MD5 for {inference_results}')
+                continue
+
+            shift_untok_predicted_clusters = [[[start + index_shift, end + index_shift] for start, end in cluster] for cluster in untok_predicted_clusters]
+            if not doc_key in united_untok_predicted_clusters:
+                united_untok_predicted_clusters[doc_key] = []
+            united_untok_predicted_clusters[doc_key].extend(shift_untok_predicted_clusters)
+        return united_untok_predicted_clusters
+
+    def get_conll_dicts(self, untok_predicted_clusters, done_keys):
+        doc_to_prediction = {}
+        doc_to_subtoken_map = {}
+
+        for doc_key, (sentences, untok_golden_clusters, speakers, conll_lines) in self.document_examples.items():
+            if doc_key not in done_keys:
+                continue
+
+            words = flatten_list_of_lists(sentences)
+            words = [w.lower() for w in words]
+
+            subtoken_maps, _, gold_clusters, word_idx_to_start_token_idx, word_idx_to_end_token_idx = self.tokenized_document_examples[doc_key]
+            predicted_clusters = [ [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
+                                     cluster in untok_predicted_clusters[doc_key]]
+            predicted_clusters = tuple([tuple(c) for c in predicted_clusters])
+
+            doc_to_prediction[doc_key]   = predicted_clusters
+            doc_to_subtoken_map[doc_key] = subtoken_maps
+        return doc_to_prediction, doc_to_subtoken_map
+
+    def documents_evaluate(self, inference_dir, official=True):
+        output_dir = os.path.join(inference_dir, 'document_eval_output')
+        try:
+            os.mkdir(output_dir)
+        except:
+            pass
+        united_untok_predicted_clusters = self.get_united_predicted_clusters(inference_dir)
+        done_keys = list(united_untok_predicted_clusters.keys())
+        united_untok_golden_clusters = { key : value for key, value in self.united_clusters.items() if key in done_keys }
+        # generate golden file by filtering the done keys
+        results  = {
+                     'golden'    : { 'untok_clusters' : united_untok_golden_clusters }, 
+                     'predicted' : { 'untok_clusters' : united_untok_predicted_clusters }, 
+                   }
+        for results_type, result in results.items():
+            import ipdb; ipdb.set_trace()
+            doc_to_prediction, doc_to_subtoken_map = self.get_conll_dicts(result['untok_clusters'], done_keys)
+            pass
+
     def __len__(self):
         return len(self.examples)
 
+
+def generate_true_cluster_example(true_mention, sentence, model_output_mentions):
+    for m in model_output_mentions:
+        replace_tok = UNK_CLUSTER_TOKEN
+        if m[MEN_SPAN_RANGE_IDX] == true_mention[MEN_SPAN_RANGE_IDX]:
+            replace_tok = IN_CLUSTER_TOKEN
+        start, end = m[MEN_SPAN_RANGE_IDX]
+        full_mention = sentence[start: end + 1]
+        if f'[[{m[MEN_CLUSTER_TAG_IDX]}]]' == replace_tok:
+            continue
+        replaced_full_mention = full_mention.replace(f'[[{m[MEN_CLUSTER_TAG_IDX]}]]', replace_tok)
+        if (full_mention != replaced_full_mention):
+            print(f'Replace!: {m}')
+            print(full_mention)
+            print(replaced_full_mention)
+            sentence = sentence.replace(full_mention, replaced_full_mention)
+        return sentence
 
 def create_datasets():
     # path
@@ -494,22 +653,40 @@ def load_pickles():
         print('Please provide an inference directory')
     return builder, ifer_dir
 
-def generate_true_cluster_example(true_mention, sentence, model_output_mentions):
-    for m in model_output_mentions:
-        replace_tok = UNK_CLUSTER_TOKEN
-        if m[MEN_SPAN_RANGE_IDX] == true_mention[MEN_SPAN_RANGE_IDX]:
-            replace_tok = IN_CLUSTER_TOKEN
-        start, end = m[MEN_SPAN_RANGE_IDX]
-        full_mention = sentence[start: end + 1]
-        if f'[[{m[MEN_CLUSTER_TAG_IDX]}]]' == replace_tok:
+
+def monitor_inference(doc_keys, infer_dir):
+    results = []
+
+    print(f'Inference Directory: {infer_dir}')
+    done_keys = []
+    for current_doc_key in doc_keys:
+        try:
+            current_doc_key_dirname = current_doc_key.replace('/', '#')
+            doc_key_dir = os.path.join(infer_dir, current_doc_key_dirname)
+            if os.path.isdir(doc_key_dir):
+                meta_path = os.path.join(doc_key_dir, 'meta.json')
+                paragraphs_count = None
+                with open(meta_path, 'rb') as f:
+                    json_str = f.read().decode('ascii')
+                    meta = json.loads(json_str)
+                    paragraphs_count = meta['paragraphs_count'] 
+
+                if paragraphs_count is None:
+                    continue
+
+                files = os.listdir(doc_key_dir)
+                files = [f for f in files if 'paragraph' in f]
+                if len(files) == paragraphs_count:
+                    done_keys.append(current_doc_key)
+        except:
             continue
-        replaced_full_mention = full_mention.replace(f'[[{m[MEN_CLUSTER_TAG_IDX]}]]', replace_tok)
-        if (full_mention != replaced_full_mention):
-            print(f'Replace!: {m}')
-            print(full_mention)
-            print(replaced_full_mention)
-            sentence = sentence.replace(full_mention, replaced_full_mention)
-        return sentence
+
+    ratio = 100 * len(done_keys) / len(doc_keys)
+    print('Monitor Results:')
+    print(f'Done keys: {done_keys}')
+    print(f'Done {len(done_keys)} / {len(doc_keys)} = {ratio}%')
+    print()
+    return done_keys, ratio
 
 if __name__ == '__main__':
     create_datasets()

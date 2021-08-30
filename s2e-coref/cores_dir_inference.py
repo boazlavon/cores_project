@@ -19,7 +19,7 @@ from utils import flatten_list_of_lists
 import torch
 import pandas as pd
 from cores_tokens import UNK_CLUSTER_TOKEN, IN_CLUSTER_TOKEN, NOT_IN_CLUSTER_TOKEN
-from cores_tokens_test import CoresDatasetPreProcessorTest
+from cores_tokens_test import CoresDatasetPreProcessorTest, monitor_inference
 
 # Training imports
 from transformers import T5ForConditionalGeneration, T5Tokenizer 
@@ -403,49 +403,6 @@ def predict_final_clusters(pred_obj_clusters, words):
     return final_pred_clusters, unmatched_mentions, clean_words_str
 
 
-def monitor_inference(builder, tokenizer, model, model_type, config, beam_size):
-    results = []
-    proj_dir = r'.'
-    infer_main_dir = os.path.join(proj_dir, 'inference_results')
-    infer_dir = os.path.join(infer_main_dir, model_type, config, f'beam_{beam_size}')
-    try:
-        os.system(f'mkdir -p {infer_dir}')
-    except:
-        pass
-
-    print(f'Inference Directory: {infer_dir}')
-    done_keys = []
-    doc_keys = list(builder.original_examples.keys())
-    for current_doc_key in doc_keys:
-        try:
-            current_doc_key_dirname = current_doc_key.replace('/', '#')
-            doc_key_dir = os.path.join(infer_dir, current_doc_key_dirname)
-            if os.path.isdir(doc_key_dir):
-                meta_path = os.path.join(doc_key_dir, 'meta.json')
-                paragraphs_count = None
-                with open(meta_path, 'rb') as f:
-                    json_str = f.read().decode('ascii')
-                    meta = json.loads(json_str)
-                    paragraphs_count = meta['paragraphs_count'] 
-
-                if paragraphs_count is None:
-                    continue
-
-                files = os.listdir(doc_key_dir)
-                files = [f for f in files if 'paragraph' in f]
-                if len(files) == paragraphs_count:
-                    done_keys.append(current_doc_key)
-        except:
-            continue
-
-    ratio = 100 * len(done_keys) / len(doc_keys)
-    print('Monitor Results:')
-    print(f'Done keys: {done_keys}')
-    print(f'Done {len(done_keys)} / {len(doc_keys)} = {ratio}%')
-    print()
-    return done_keys
-
-
 def print_results(final_pred_clusters, golden_clusters, words, unmatched_mentions):
     print('=======================')
     words_str = ' '.join(words)
@@ -593,11 +550,27 @@ def main():
     config = f'{args.dropout}'
 
     builder, tokenizer, model = load_pickles(args.model, args.builder, args.beam, config)
-    done_keys = monitor_inference(builder, tokenizer, model, args.model, config, args.beam)
+    if args.beam > 4:
+        print('Invalid beam')
+        sys.exit(0)
+
+    proj_dir = r'.'
+    infer_main_dir = os.path.join(proj_dir, 'inference_results')
+    infer_dir = os.path.join(infer_main_dir, args.model, config, f'beam_{args.beam}')
+    if args.model not in ('bert', 'init_bert', 't5', 'init_t5', 'bart', 'init_bart'):
+        print('Invalid model {args.model}')
+        sys.exit(0)
+
+    try:
+        os.system(f'mkdir -p {infer_dir}')
+    except:
+        pass
+
+    done_keys, ratio = monitor_inference(builder.document_examples.keys(), infer_dir)
     if args.monitor:
         while True:
             time.sleep(60)
-            done_keys = monitor_inference(builder, tokenizer, model, args.model, config, args.beam)
+            done_keys, ratio = monitor_inference(builder.document_examples.keys(), infer_dir)
     else:
         done_keys = []
         generate_inference_results(builder, tokenizer, model, args.model, config, args.beam, done_keys)

@@ -66,6 +66,7 @@ def eval():
 
     builder = load_pickles(args.builder)
     builder.paragraphs_evaluate(infer_dir, official=args.official)
+    #builder.documents_evaluate(infer_dir, official=args.official)
 
 if __name__ == '__main__':
     eval()
