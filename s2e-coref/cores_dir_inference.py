@@ -331,10 +331,7 @@ def match_mention_to_word(mention ,words):
         start = -1
     elif len(span_idxs) == 1:
         start = span_idxs[0]
-        try:
-            start = suffix_map[start]
-        except:
-            import ipdb; ipdb.set_trace()
+        start = suffix_map[start]
         words_count = len(mention[MEN_SPAN_STR_IDX].split(' '))
         end = start + (words_count - 1)
     else: # len > 1
@@ -423,16 +420,7 @@ def print_results(final_pred_clusters, golden_clusters, words, unmatched_mention
         print(mention)
     print('=======================\n')
 
-def process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, model, model_type, config, beam_size, dummy=False):
-    lock_file = os.path.join(doc_key_dir, 'lock')
-    #if os.path.exists(lock_file):
-    #    print(f'{current_doc_key} is locked')
-    #    return
-
-    # lock
-    #with open(lock_file, 'wb') as f:
-    #    f.write('locked'.encode('ascii'))
-
+def process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, model, model_type, config, beam_size, tag_only_clusters=False):
     cur_paragraph_examples = [(idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines, index_shift) \
                                for (idx, doc_key, paragraph_id, new_words, new_clusters, new_speakers, new_conll_lines, index_shift) \
                                in builder.paragraph_examples if doc_key == current_doc_key]
@@ -475,7 +463,13 @@ def process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, m
                 pass
 
         print(f'Infering {doc_key} : {paragraph_id}')
-        pred_obj_clusters, cluster_pred_outputs = inference_example(model, tokenizer, words, beam_size)
+        stub_model_output_str = None
+        if tag_only_clusters:
+            print(f'NOTE!!! Using Pre-defined mentions!')
+            # Get pre-defined mentions from the builder. we want to check only the clusters tagging.
+            stub_model_output_str = builder.mentions_df.loc[builder.mentions_df['doc_key'] == doc_key].loc[builder.mentions_df['paragraph_id'] == paragraph_id]['output_str'].tolist()[0]
+
+        pred_obj_clusters, cluster_pred_outputs = inference_example(model, tokenizer, words, beam_size, model_output_str=stub_model_output_str)
         final_pred_clusters, unmatched_mentions, clean_words_str = predict_final_clusters(pred_obj_clusters, words)
 
         with open(results_path, 'wb') as f:
@@ -486,15 +480,10 @@ def process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, m
         print_results(final_pred_clusters, golden_clusters, words, unmatched_mentions)
     
     print(f'Finished Infereing {current_doc_key}')
-    # unlock
-    try:
-        os.remove(lock_file)
-    except:
-        pass
     return
 
 
-def generate_inference_results(builder, tokenizer, model, model_type, config, beam_size, done_keys):
+def generate_inference_results(builder, tokenizer, model, model_type, config, beam_size, done_keys, tag_only_clusters=False):
     results = []
     proj_dir = r'.'
     infer_main_dir = os.path.join(proj_dir, 'inference_results')
@@ -505,29 +494,11 @@ def generate_inference_results(builder, tokenizer, model, model_type, config, be
         pass
 
     # first, update all keys that already have a dir.
-    doc_keys = list(builder.original_examples.keys())
-    doc_keys = list(set(doc_keys) - set(done_keys))
-    #doc_keys.shuffle()
-    updated_keys = []
-    for doc_key_dirname in os.listdir(infer_dir):
-        current_doc_key = doc_key_dirname.replace('#', '/')
-        if not current_doc_key in doc_keys:
-            print(f'{current_doc_key} dont exist!')
-        doc_key_dir = os.path.join(infer_dir, doc_key_dirname)
-        if os.path.isdir(doc_key_dir):
-            process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, model, model_type, config, beam_size)
-            updated_keys.append(current_doc_key)
-        else:
-            print(f'{doc_key_dir} is not a directory!') 
+    doc_keys = list(builder.document_examples.keys())
+    #doc_keys = list(set(doc_keys) - set(done_keys))
 
-    ratio = 100 * len(updated_keys) / len(doc_keys)
-    print(f'Updated keys: {len(updated_keys)} / {len(doc_keys)} = {ratio}%')
     # process keys who dont have a directory
     for current_doc_key in doc_keys:
-        if current_doc_key in updated_keys:
-            print(f'{current_doc_key} has already updated')
-            continue
-
         current_doc_key_dirname = current_doc_key.replace('/', '#')
         doc_key_dir = os.path.join(infer_dir, current_doc_key_dirname)
         if not os.path.isdir(doc_key_dir):
@@ -535,8 +506,7 @@ def generate_inference_results(builder, tokenizer, model, model_type, config, be
             print(f'Create {current_doc_key} dir: {doc_key_dir}')
         else:
             print(f'Dir exists {current_doc_key} : {doc_key_dir}')
-        process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, model, model_type, config, beam_size)
-        updated_keys.append(current_doc_key)
+        process_doc_key_examples(doc_key_dir, current_doc_key, builder, tokenizer, model, model_type, config, beam_size, tag_only_clusters=tag_only_clusters)
 
 def main():
     parser = argparse.ArgumentParser(add_help=True)
@@ -545,9 +515,12 @@ def main():
     parser.add_argument('--beam', type=int)
     parser.add_argument('--dropout', type=float)
     parser.add_argument('--monitor', type=bool, default=False)
-    parser.add_argument('--dummy', type=bool, default=False)
+    parser.add_argument('--tag_only_clusters', type=bool, default=False)
     args = parser.parse_args(sys.argv[1:])
     config = f'{args.dropout}'
+    inter_config = config
+    if args.tag_only_clusters:
+        infer_config = f'{args.dropout}_clusters_prediction_only'
 
     builder, tokenizer, model = load_pickles(args.model, args.builder, args.beam, config)
     if args.beam > 4:
@@ -556,7 +529,7 @@ def main():
 
     proj_dir = r'.'
     infer_main_dir = os.path.join(proj_dir, 'inference_results')
-    infer_dir = os.path.join(infer_main_dir, args.model, config, f'beam_{args.beam}')
+    infer_dir = os.path.join(infer_main_dir, args.model, inter_config, f'beam_{args.beam}')
     if args.model not in ('bert', 'init_bert', 't5', 'init_t5', 'bart', 'init_bart'):
         print('Invalid model {args.model}')
         sys.exit(0)
@@ -573,6 +546,6 @@ def main():
             done_keys, ratio = monitor_inference(builder.document_examples.keys(), infer_dir)
     else:
         done_keys = []
-        generate_inference_results(builder, tokenizer, model, args.model, config, args.beam, done_keys)
+        generate_inference_results(builder, tokenizer, model, args.model, infer_config, args.beam, done_keys, tag_only_clusters=args.tag_only_clusters)
 if __name__ == '__main__':
     main()

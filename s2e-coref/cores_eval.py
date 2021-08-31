@@ -56,18 +56,25 @@ def eval():
     parser.add_argument('--beam', type=int)
     parser.add_argument('--dropout', type=float)
     parser.add_argument('--official', type=bool, default=True)
+    parser.add_argument('--tag_only_clusters', type=bool, default=False)
     args = parser.parse_args(sys.argv[1:])
     config = f'{args.dropout}'
+    infer_config = config
+    if args.tag_only_clusters:
+        infer_config = f'{args.dropout}_clusters_prediction_only'
 
     proj_dir = r'.'
     infer_main_dir = os.path.join(proj_dir, 'inference_results')
-    infer_dir = os.path.join(infer_main_dir, args.model, config, f'beam_{args.beam}')
+    infer_dir = os.path.join(infer_main_dir, args.model, infer_config, f'beam_{args.beam}')
     if not os.path.isdir(infer_dir):
         print('Please provide an inference directory: {infer_dir}')
 
-    eval_output_dir = os.path.join(infer_dir, 'eval_output')
+    proj_dir = r'.'
+    eval_main_dir = os.path.join(proj_dir, 'eval_results')
+    eval_dir = os.path.join(eval_main_dir, args.model, infer_config, f'beam_{args.beam}')
+    eval_output_dir = os.path.join(eval_dir, 'eval_output')
     try:
-        os.mkdir(eval_output_dir)
+        os.system(f'mkdir -p {eval_output_dir}')
     except:
         pass
 
@@ -84,7 +91,6 @@ def eval():
         pass
 
     builder = load_pickles(args.builder)
-
     paragraph_eval_results = os.path.join(paragraph_output_dir, 'eval.log')
     tee = subprocess.Popen(["tee", paragraph_eval_results], stdin=subprocess.PIPE)
     os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
@@ -93,7 +99,6 @@ def eval():
     print('******************  Paragraph Eval ******************')
     builder.paragraphs_evaluate(infer_dir, paragraph_output_dir, official=args.official)
     print('****************************************************')
-    close(tee.stdin.fileno())
 
     document_eval_results = os.path.join(documents_output_dir, 'eval.log')
     tee = subprocess.Popen(["tee", document_eval_results], stdin=subprocess.PIPE)
@@ -102,7 +107,6 @@ def eval():
     print('******************  Document Eval ******************')
     builder.documents_evaluate(infer_dir, documents_output_dir, official=args.official)
     print('****************************************************')
-    close(tee.stdin.fileno())
 
 if __name__ == '__main__':
     eval()
