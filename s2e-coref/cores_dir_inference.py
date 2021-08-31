@@ -518,7 +518,7 @@ def main():
     parser.add_argument('--tag_only_clusters', type=bool, default=False)
     args = parser.parse_args(sys.argv[1:])
     config = f'{args.dropout}'
-    inter_config = config
+    infer_config = config
     if args.tag_only_clusters:
         infer_config = f'{args.dropout}_clusters_prediction_only'
 
@@ -529,7 +529,7 @@ def main():
 
     proj_dir = r'.'
     infer_main_dir = os.path.join(proj_dir, 'inference_results')
-    infer_dir = os.path.join(infer_main_dir, args.model, inter_config, f'beam_{args.beam}')
+    infer_dir = os.path.join(infer_main_dir, args.model, infer_config, f'beam_{args.beam}')
     if args.model not in ('bert', 'init_bert', 't5', 'init_t5', 'bart', 'init_bart'):
         print('Invalid model {args.model}')
         sys.exit(0)
