@@ -14,7 +14,7 @@ from datasets import Dataset, load_metric
 from utils import extract_mentions_to_predicted_clusters_from_clusters
 from cores_tokens import encode
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
-from conll import evaluate_conll
+from conll import evaluate_conll, output_conll, official_conll_eval
 from transformers import BartForConditionalGeneration, BartTokenizer
 
 import torch
@@ -71,7 +71,7 @@ class CoresDatasetPreProcessorTest(object):
                print(f'{cluster}')
            print('=======================')
 
-           for (idx, doc_key, paragraph_id, sentences, golden_clusters, _, conll_lines, _) in (self.paragraph_examples):
+           for (idx, doc_key, paragraph_id, sentences, gold_clusters, _, conll_lines, _) in (self.paragraph_examples):
                if main_doc_key != doc_key:
                    continue
                print('=======================')
@@ -82,7 +82,7 @@ class CoresDatasetPreProcessorTest(object):
                print(words_str)
                print('=======================')
                print('Golden:')
-               for cluster in golden_clusters:
+               for cluster in gold_clusters:
                    values_str = tuple([(' '.join(words[start : end + 1]), (start, end)) for start, end in cluster])
                    print(f'{values_str}')
                print('=======================')
@@ -171,10 +171,10 @@ class CoresDatasetPreProcessorTest(object):
         for doc_key in united_clusters:
             united_mentions = extract_mentions_to_predicted_clusters_from_clusters(united_clusters[doc_key])
             united_mentions = set(united_mentions.keys())
-            _, golden_clusters, _, _ = self.document_examples[doc_key]
-            golden_mentions = extract_mentions_to_predicted_clusters_from_clusters(golden_clusters)
-            golden_mentions = set(golden_mentions.keys())
-            #assert united_mentions == golden_mentions
+            _, gold_clusters, _, _ = self.document_examples[doc_key]
+            gold_mentions = extract_mentions_to_predicted_clusters_from_clusters(gold_clusters)
+            gold_mentions = set(gold_mentions.keys())
+            #assert united_mentions == gold_mentions
         return united_clusters
 
     def _document_tokenize(self):
@@ -384,20 +384,15 @@ class CoresDatasetPreProcessorTest(object):
         return paragraph_examples, mentions_examples
 
 
-    def paragraphs_evaluate(self, inference_dir, official=True):
+    def paragraphs_evaluate(self, inference_dir, output_dir, official=True):
         mention_evaluator = MentionEvaluator()
         coref_evaluator = CorefEvaluator()
         doc_to_prediction = {}
         doc_to_subtoken_map = {}
-        output_dir = os.path.join(inference_dir, 'paragrph_eval_output')
-        try:
-            os.mkdir(output_dir)
-        except:
-            pass
-        conll_golden_path = os.path.join(output_dir, 'eval_conll_gold_path')
-        self.to_paragraphs_ontonotes(conll_golden_path)
+        conll_gold_path = os.path.join(output_dir, 'eval_conll_gold_path')
+        self.to_paragraphs_ontonotes(conll_gold_path)
 
-        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, index_shift in self.paragraph_examples:
+        for idx, doc_key, paragraph_id, sentences, untokenized_gold_clusters, _, _, index_shift in self.paragraph_examples:
             words = flatten_list_of_lists(sentences)
             words = [w.lower() for w in words]
             try:
@@ -417,7 +412,7 @@ class CoresDatasetPreProcessorTest(object):
             doc_key_dir = os.path.join(inference_dir, doc_key_dir)
             inference_results = os.path.join(doc_key_dir, f'paragraph_{paragraph_id}.pkl')
             if not os.path.isfile(inference_results):
-                print(f'{inference_results} dont exist. continue!')
+                #print(f'{inference_results} dont exist. continue!')
                 continue
 
             try:
@@ -463,7 +458,7 @@ class CoresDatasetPreProcessorTest(object):
             ("recall", rec),
             ("f1", f1)
         ]
-        print("***** Eval results {} *****")
+        print("***** Eval Results *****")
         for key, values in results:
             if isinstance(values, float):
                 print(f"  {key} = {values:.3f}")
@@ -475,7 +470,7 @@ class CoresDatasetPreProcessorTest(object):
                 f.write(json.dumps(doc_to_prediction) + '\n')
                 f.write(json.dumps(doc_to_subtoken_map) + '\n')
 
-            conll_results = evaluate_conll(conll_golden_path, doc_to_prediction, doc_to_subtoken_map)
+            conll_results = evaluate_conll(conll_gold_path, doc_to_prediction, doc_to_subtoken_map)
             official_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
             print('Official avg F1: %.4f' % official_f1)
         return results
@@ -484,7 +479,7 @@ class CoresDatasetPreProcessorTest(object):
         united_untok_predicted_clusters = {}
         # iterate only over the keys from the monitor
         done_keys, done_keys_ratio = monitor_inference(self.document_examples.keys(), inference_dir)
-        for idx, doc_key, paragraph_id, sentences, untokenized_golden_clusters, _, _, index_shift in self.paragraph_examples:
+        for idx, doc_key, paragraph_id, sentences, untokenized_gold_clusters, _, _, index_shift in self.paragraph_examples:
             if doc_key not in done_keys:
                 continue
             if doc_key not in self.document_examples:
@@ -535,7 +530,7 @@ class CoresDatasetPreProcessorTest(object):
         doc_to_prediction = {}
         doc_to_subtoken_map = {}
 
-        for doc_key, (sentences, untok_golden_clusters, speakers, conll_lines) in self.document_examples.items():
+        for doc_key, (sentences, untok_gold_clusters, speakers, conll_lines) in self.document_examples.items():
             if doc_key not in done_keys:
                 continue
 
@@ -551,24 +546,91 @@ class CoresDatasetPreProcessorTest(object):
             doc_to_subtoken_map[doc_key] = subtoken_maps
         return doc_to_prediction, doc_to_subtoken_map
 
-    def documents_evaluate(self, inference_dir, official=True):
-        output_dir = os.path.join(inference_dir, 'document_eval_output')
-        try:
-            os.mkdir(output_dir)
-        except:
-            pass
+    def to_documents_ontonotes(self, ontonotes_path, filtered_doc_keys):
+        with open(ontonotes_path, 'w') as f:
+            i = 0
+            for doc_key, (sentences, clusters, speakers, conll_lines) in self.document_examples.items():
+                if doc_key not in filtered_doc_keys:
+                    continue
+                # beggining line
+                if i > 0:
+                    f.write('\n')
+                doc_key_split = doc_key.split('_')
+                orig_doc_key  = '_'.join(doc_key_split[:-1])
+                document_id   = int(doc_key_split[-1])
+                beginning = f'#begin document ({orig_doc_key}); part {document_id:03}\n'
+                f.write(beginning)
+                assert [len(sentence) for sentence in sentences] == [len(lines_group) for lines_group in conll_lines]
+                # iterate over a sentence
+                for sentence_idx, (sentence, lines_group) in enumerate(zip(sentences, conll_lines)):
+                    for word_idx, (word, line) in enumerate(zip(sentence, lines_group)):
+                        f.write(line) # TODO: encode utf-8
+                    f.write('\n')
+                f.write('#end document')
+                i+=1
+
+    def documents_evaluate(self, inference_dir, output_dir, official=True):
+        # generate gold file by filtering the done keys
+        gold_path = os.path.join(output_dir, 'original_conll')
+
         united_untok_predicted_clusters = self.get_united_predicted_clusters(inference_dir)
         done_keys = list(united_untok_predicted_clusters.keys())
-        united_untok_golden_clusters = { key : value for key, value in self.united_clusters.items() if key in done_keys }
-        # generate golden file by filtering the done keys
+        united_untok_gold_clusters = { key : value for key, value in self.united_clusters.items() if key in done_keys }
+
+        mention_evaluator = MentionEvaluator()
+        coref_evaluator = CorefEvaluator()
+        for key in done_keys:
+            predicted_clusters = united_untok_predicted_clusters[key]
+            predicted_clusters = tuple([tuple([tuple(mention) for mention in cluster]) for cluster in predicted_clusters])
+            predicted_mentions = extract_mentions_to_predicted_clusters_from_clusters(predicted_clusters)
+
+            gold_clusters      = united_untok_gold_clusters[key]
+            gold_clusters      = tuple([tuple([tuple(mention) for mention in cluster]) for cluster in gold_clusters])
+            gold_mentions    = extract_mentions_to_predicted_clusters_from_clusters(gold_clusters)
+
+            coref_evaluator.update(predicted_clusters, gold_clusters, predicted_mentions, gold_mentions)
+
+            predicted_mentions = tuple(predicted_mentions.keys())
+            gold_mentions = tuple(gold_mentions.keys())
+            mention_evaluator.update(predicted_mentions, gold_mentions)
+
+        mention_precision, mentions_recall, mention_f1 = mention_evaluator.get_prf()
+        prec, rec, f1 = coref_evaluator.get_prf()
+
+        regular_results = [
+            ("mention precision", mention_precision),
+            ("mention recall", mentions_recall),
+            ("mention f1", mention_f1),
+            ("precision", prec),
+            ("recall", rec),
+            ("f1", f1)
+        ]
+        print("***** Eval Results *****")
+        for key, values in regular_results:
+            if isinstance(values, float):
+                print(f"  {key} = {values:.3f}")
+            else:
+                print(f"  {key} = {values}")
+
+        self.to_documents_ontonotes(gold_path, done_keys)
         results  = {
-                     'golden'    : { 'untok_clusters' : united_untok_golden_clusters }, 
+                     'gold'    : { 'untok_clusters' : united_untok_gold_clusters }, 
                      'predicted' : { 'untok_clusters' : united_untok_predicted_clusters }, 
                    }
         for results_type, result in results.items():
-            import ipdb; ipdb.set_trace()
             doc_to_prediction, doc_to_subtoken_map = self.get_conll_dicts(result['untok_clusters'], done_keys)
-            pass
+            conll_path = os.path.join(output_dir, f'{results_type}_conll')
+            result['conll_path'] = conll_path
+            with open(conll_path, "w") as conll_file:
+                with open(gold_path, "r") as gold_file:
+                    output_conll(gold_file, conll_file, doc_to_prediction, doc_to_subtoken_map)
+
+        with open(results['gold']['conll_path'], "r") as gold_conll:
+            with open(results['predicted']['conll_path'], "r") as predicted_conll:
+                conll_results = {m: official_conll_eval(gold_conll.name, predicted_conll.name, m, True) for m in ("muc", "bcub", "ceafe") }
+
+        official_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+        print('Official avg F1: %.4f' % official_f1)
 
     def __len__(self):
         return len(self.examples)
@@ -683,8 +745,8 @@ def monitor_inference(doc_keys, infer_dir):
 
     ratio = 100 * len(done_keys) / len(doc_keys)
     print('Monitor Results:')
-    print(f'Done keys: {done_keys}')
-    print(f'Done {len(done_keys)} / {len(doc_keys)} = {ratio}%')
+    #print(f'Keys for Eval: {done_keys}')
+    print(f'Keys for Eval {len(done_keys)} / {len(doc_keys)} = {ratio}%')
     print()
     return done_keys, ratio
 

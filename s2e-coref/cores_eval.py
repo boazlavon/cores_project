@@ -1,4 +1,5 @@
 import json
+import subprocess, os, sys
 import  argparse
 import random
 import logging
@@ -64,9 +65,44 @@ def eval():
     if not os.path.isdir(infer_dir):
         print('Please provide an inference directory: {infer_dir}')
 
+    eval_output_dir = os.path.join(infer_dir, 'eval_output')
+    try:
+        os.mkdir(eval_output_dir)
+    except:
+        pass
+
+    print(f'Eval output dir: {eval_output_dir}')
+    paragraph_output_dir = os.path.join(eval_output_dir, 'paragrph_eval_output')
+    try:
+        os.mkdir(paragraph_output_dir)
+    except:
+        pass
+    documents_output_dir = os.path.join(eval_output_dir, 'document_eval_output')
+    try:
+        os.mkdir(documents_output_dir)
+    except:
+        pass
+
     builder = load_pickles(args.builder)
-    builder.paragraphs_evaluate(infer_dir, official=args.official)
-    #builder.documents_evaluate(infer_dir, official=args.official)
+
+    paragraph_eval_results = os.path.join(paragraph_output_dir, 'eval.log')
+    tee = subprocess.Popen(["tee", paragraph_eval_results], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    print('****************************************************')
+    print('******************  Paragraph Eval ******************')
+    builder.paragraphs_evaluate(infer_dir, paragraph_output_dir, official=args.official)
+    print('****************************************************')
+    close(tee.stdin.fileno())
+
+    document_eval_results = os.path.join(documents_output_dir, 'eval.log')
+    tee = subprocess.Popen(["tee", document_eval_results], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    print('******************  Document Eval ******************')
+    builder.documents_evaluate(infer_dir, documents_output_dir, official=args.official)
+    print('****************************************************')
+    close(tee.stdin.fileno())
 
 if __name__ == '__main__':
     eval()
