@@ -1,5 +1,5 @@
 #! /bin/sh
-#SBATCH --job-name=inf4it5
+#SBATCH --job-name=inf4it501
 #SBATCH --output=infering/init_t5/0.1_4.out
 #SBATCH --error=infering/init_t5/0.1_4.err
 #SBATCH --partition=studentkillable

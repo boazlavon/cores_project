@@ -1,5 +1,5 @@
 #! /bin/sh
-#SBATCH --job-name=inf3ibart
+#SBATCH --job-name=inf3ibart01
 #SBATCH --output=infering/init_bart/0.1_3.out
 #SBATCH --error=infering/init_bart/0.1_3.err
 #SBATCH --partition=studentkillable
