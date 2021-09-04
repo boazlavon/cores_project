@@ -1,0 +1,71 @@
+******************  Document Eval ******************
+Inference Directory: ./inference_results/init_bert/0.1/beam_3
+Monitor Results:
+Keys for Eval 348 / 348 = 100.0%
+
+***** Eval Results *****
+  mention precision = 0.762
+  mention recall = 0.589
+  mention f1 = 0.664
+  precision = 0.607
+  recall = 0.376
+  f1 = 0.446
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'muc', './eval_results/init_bert/0.1/beam_3/eval_output/document_eval_output/gold_conll', './eval_results/init_bert/0.1/beam_3/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for muc
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+Repeated mention in the response: 850, 852 8989
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11622 / 19723) 58.92%	Precision: (11622 / 15260) 76.15%	F1: 66.44%
+--------------------------------------------------------------------------
+Coreference: Recall: (4791 / 9839) 48.69%	Precision: (4791 / 7787) 61.52%	F1: 54.36%
+--------------------------------------------------------------------------
+
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'bcub', './eval_results/init_bert/0.1/beam_3/eval_output/document_eval_output/gold_conll', './eval_results/init_bert/0.1/beam_3/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for bcub
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+Repeated mention in the response: 850, 852 8989
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11622 / 19723) 58.92%	Precision: (11622 / 15260) 76.15%	F1: 66.44%
+--------------------------------------------------------------------------
+Coreference: Recall: (9123.37276334776 / 19723) 46.25%	PrecisionINFO:conll:Official result for ceafe
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+Repeated mention in the response: 850, 852 8989
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11547 / 19723) 58.54%	Precision: (11547 / 15160) 76.16%	F1: 66.2%
+--------------------------------------------------------------------------
+Coreference: Recall: (3759.63121220197 / 9884) 38.03%	Precision: (3759.63121220197 / 7415) 50.7%	F1: 43.46%
+--------------------------------------------------------------------------
+
+Eval output dir: ./eval_results/init_bert/0.1/beam_3/eval_output
+Builder path: new_builders/test.english.jsonlines.builder.bert.pkl
+Loading Builder
+****************************************************
+******************  Paragraph Eval ******************
+***** Eval Results *****
+  mention precision = 0.762
+  mention recall = 0.589
+  mention f1 = 0.664
+  precision = 0.607
+  recall = 0.376
+  f1 = 0.446
+Official avg F1: 49.7167
+****************************************************
+******************  Document Eval ******************
+Inference Directory: ./inference_results/init_bert/0.1/beam_3
+Monitor Results:
+Keys for Eval 348 / 348 = 100.0%
+
+***** Eval Results *****
+  mention precision = 0.762
+  mention recall = 0.589
+  mention f1 = 0.664
+  precision = 0.607
+  recall = 0.376
+  f1 = 0.446
+Official avg F1: 47.2967
+****************************************************

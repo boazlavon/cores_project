@@ -1,0 +1,22 @@
+******************  Document Eval ******************
+Inference Directory: ./inference_results/init_t5/0.1/beam_4
+Monitor Results:
+Keys for Eval 0 / 348 = 0.0%
+
+***** Eval Results *****
+  mention precision = 0.000
+  mention recall = 0.000
+  mention f1 = 0.000
+  precision = 0.000
+  recall = 0.000
+  f1 = 0.000
+Traceback (most recent call last):
+  File "cores_eval.py", line 112, in <module>
+    eval()
+  File "cores_eval.py", line 108, in eval
+    builder.documents_evaluate(infer_dir, documents_output_dir, official=args.official)
+  File "/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref/cores_tokens_test.py", line 656, in documents_evaluate
+    output_conll(gold_file, conll_file, doc_to_prediction, doc_to_subtoken_map)
+  File "/home/yandex/AMNLP2021/boazlavon/cores_project/s2e-coref/conll.py", line 89, in output_conll
+    keys_prec = 100.0 * exist_keys_count / keys_count
+ZeroDivisionError: float division by zero

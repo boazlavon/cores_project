@@ -1,0 +1,60 @@
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'muc', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/gold_conll', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for muc
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11715 / 19722) 59.4%	Precision: (11715 / 13084) 89.53%	F1: 71.41%
+--------------------------------------------------------------------------
+Coreference: Recall: (5952 / 9858) 60.37%	Precision: (5952 / 7310) 81.42%	F1: 69.33%
+--------------------------------------------------------------------------
+
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'bcub', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/gold_conll', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for bcub
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11715 / 19722) 59.4%	Precision: (11715 / 13084) 89.53%	F1: 71.41%
+--------------------------------------------------------------------------
+Coreference: Recall: (9999.89693362194 / 19722) 50.7%	Precision: (10240.830949606 / 13084) 78.26%	F1: 61.54%
+--------------------------------------------------------------------------
+
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'ceafe', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/gold_conll', './eval_results/bart/0.1/beam_4/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for ceafe
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11715 / 19722) 59.4%	Precision: (11715 / 13084) 89.53%	F1: 71.41%
+--------------------------------------------------------------------------
+Coreference: Recall: (4232.43631726106 / 9864) 42.9%	Precision: (4232.43631726106 / 5774) 73.3%	F1: 54.13%
+--------------------------------------------------------------------------
+
+Eval output dir: ./eval_results/bart/0.1/beam_4/eval_output
+Builder path: new_builders/test.english.jsonlines.builder.bart.pkl
+Loading Builder
+****************************************************
+******************  Paragraph Eval ******************
+***** Eval Results *****
+  mention precision = 0.895
+  mention recall = 0.594
+  mention f1 = 0.714
+  precision = 0.804
+  recall = 0.481
+  f1 = 0.588
+Official avg F1: 61.8300
+****************************************************
+******************  Document Eval ******************
+Inference Directory: ./inference_results/bart/0.1/beam_4
+Monitor Results:
+Keys for Eval 348 / 348 = 100.0%
+
+***** Eval Results *****
+  mention precision = 0.895
+  mention recall = 0.594
+  mention f1 = 0.714
+  precision = 0.804
+  recall = 0.481
+  f1 = 0.588
+Official avg F1: 61.6667
+****************************************************

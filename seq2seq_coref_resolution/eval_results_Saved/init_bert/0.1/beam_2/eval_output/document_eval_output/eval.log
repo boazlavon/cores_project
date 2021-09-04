@@ -1,0 +1,46 @@
+******************  Document Eval ******************
+Inference Directory: ./inference_results/init_bert/0.1/beam_2
+Monitor Results:
+Keys for Eval 348 / 348 = 100.0%
+
+***** Eval Results *****
+  mention precision = 0.766
+  mention recall = 0.587
+  mention f1 = 0.665
+  precision = 0.614
+  recall = 0.376
+  f1 = 0.448
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:Keys: 100.0% from the test set
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'muc', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/gold_conll', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for muc
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11587 / 19723) 58.74%	Precision: (11587 / 15133) 76.56%	F1: 66.48%
+--------------------------------------------------------------------------
+Coreference: Recall: (4782 / 9839) 48.6%	Precision: (4782 / 7662) 62.41%	F1: 54.64%
+--------------------------------------------------------------------------
+
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'bcub', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/gold_conll', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for bcub
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11587 / 19723) 58.74%	Precision: (11587 / 15133) 76.56%	F1: 66.48%
+--------------------------------------------------------------------------
+Coreference: Recall: (9099.59220779221 / 19723) 46.13%	Precision: (8627.34985292486 / 15133) 57.01%	F1: 51%
+--------------------------------------------------------------------------
+
+INFO:conll:['reference-coreference-scorers/scorer.pl', 'ceafe', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/gold_conll', './eval_results/init_bert/0.1/beam_2/eval_output/document_eval_output/predicted_conll', 'none']
+INFO:conll:Official result for ceafe
+INFO:conll:version: 8.01 /home/yandex/AMNLP2021/boazlavon/cores_project/reference-coreference-scorers/lib/CorScorer.pm
+
+====== TOTALS =======
+Identification of Mentions: Recall: (11587 / 19723) 58.74%	Precision: (11587 / 15133) 76.56%	F1: 66.48%
+--------------------------------------------------------------------------
+Coreference: Recall: (3812.90882684664 / 9884) 38.57%	Precision: (3812.90882684664 / 7471) 51.03%	F1: 43.94%
+--------------------------------------------------------------------------
+
+Official avg F1: 49.8600
+****************************************************
