@@ -43,7 +43,7 @@ def generate_seq_json(model_type, checkpoints_dir, eval_outputdir):
         print(f'{loss_type}: {seq_path} -> {loss_json_path}')
     return entries
 
-def generate_graph(model_type, eval_loss_data, main_eval_dir, strip=0):
+def generate_graph(model_type, eval_loss_data, main_eval_dir, strip=0, min_epoch=10):
     if strip:
         fig_path = os.path.join(main_eval_dir, f'eval_loss_{model_type}_striped.jpeg')
     else:
@@ -51,20 +51,37 @@ def generate_graph(model_type, eval_loss_data, main_eval_dir, strip=0):
     fig = plt.figure(figsize=(8,4), dpi=300)
     graph_data = {}
     min_length = float('inf')
+    min_epoch = float('inf')
     for config, data in eval_loss_data.items():
+        if not data:
+            continue
         min_length = min(len(data), min_length)
 
     for config, data in eval_loss_data.items():
+        if not data:
+            continue
         start = int(strip * min_length)
+        xy = [ (i['epoch'], i['eval_loss']) for i in data[start:min_length] ]
+        xy = [ (epoch, eval_loss) for (epoch, eval_loss) in xy if epoch < min_epoch ]
         graph_data[config] = {
-                                'x' : [i['epoch']     for i in data[start:]], 
-                                'y' : [i['eval_loss'] for i in data[start:]], 
+                                'x' : [ epoch for (epoch, eval_loss) in xy ], 
+                                'y' : [ eval_loss for (epoch, eval_loss) in xy ]
                              }
+        #graph_data[config] = {
+        #                        'x' : [i['epoch']     for i in data[start:min_length]], 
+        #                        'y' : [i['eval_loss'] for i in data[start:min_length]], 
+        #                     }
+        print(f'{config}')
+        print(f'x length: {len(graph_data[config]["x"])}')
+        print(f'y length: {len(graph_data[config]["y"])}')
+
     fig = plt.figure()
     fig.suptitle(f'Training {model_type}')
     plt.xlabel('epoch')
     plt.ylabel('eval loss')
     for config, data in eval_loss_data.items():
+        if not data:
+            continue
         plt.plot(graph_data[config]['x'], graph_data[config]['y'], '--.', label=f'dropout: {config}')
 
     plt.legend(numpoints=1)
@@ -75,6 +92,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument('--model', type=str)
+    parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--strip', type=float, default=0.15)
     args = parser.parse_args(sys.argv[1:])
 
@@ -102,9 +120,8 @@ def main():
         except:
             pass
         eval_loss_data[config] = generate_seq_json(args.model, checkpoints_dir, eval_dir)
-
-    generate_graph(args.model ,eval_loss_data, main_eval_dir)
+    generate_graph(args.model ,eval_loss_data, main_eval_dir, min_epoch=args.epoch)
     plt.figure().clear()
-    generate_graph(args.model ,eval_loss_data, main_eval_dir, strip=args.strip)
+    generate_graph(args.model ,eval_loss_data, main_eval_dir, strip=args.strip, min_epoch=args.epoch)
 if __name__ == '__main__':
     main()

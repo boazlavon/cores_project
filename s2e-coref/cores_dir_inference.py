@@ -103,7 +103,7 @@ def inference(sentence):
 
 def load_pickles(model_type, dataset_builder_path, beam_size, config):
     os.environ["PYTHONUNBUFFERED"] = '1'
-    if not ((beam_size > 0) and (beam_size < 5)):
+    if not ((beam_size > 0) and (beam_size < 10)):
         print('Beam-Size out of range')
         sys.exit(0)
 
@@ -301,6 +301,25 @@ def clean_text(text, special_tokens=None):
     text = text.lower()
     return text
 
+def match_similar_span(mention, words):
+    span_to_find = mention[MEN_SPAN_STR_IDX]
+    span_to_find_length = len(span_to_find.split(' '))
+    if span_to_find_length == 1:
+        return (-1, -1)
+
+    spans = {}
+    for w in range(max(1, span_to_find_length - 2), min(len(words), span_to_find_length + 10)):
+        spans_w = { (i, i + w) : difflib.SequenceMatcher(None, span_to_find,' '.join(words[i : i + w])).ratio() for i in range(len(words) - w + 1) }
+        spans.update(spans_w)
+    m = max(spans, key=spans.get)
+    if spans[m] > 0.90:
+        print(f'Found most similar: {spans[m]}\n\"{words[m[0]:m[1]]}\"\n\"{span_to_find}\"')
+        return m
+    else:
+        print(f'NOT Found most similar: {spans[m]}\n\"{words[m[0]:m[1]]}\"\n\"{span_to_find}\"')
+
+    return (-1, -1)
+
 def match_mention(mention, words, words_str, suffix_map):
     i = -1
     span_str = mention[MEN_SPAN_STR_IDX].lower()
@@ -328,7 +347,8 @@ def match_mention_to_word(mention ,words):
     suffix_map = create_suffix_map(words, clean_words_str)
     span_idxs = match_mention(mention, words, clean_words_str, suffix_map)
     if len(span_idxs) == 0:
-        start = -1
+        #start, end = match_similar_span(mention, words)
+        start, end = (-1, -1)
     elif len(span_idxs) == 1:
         start = span_idxs[0]
         start = suffix_map[start]
@@ -521,6 +541,9 @@ def main():
     infer_config = config
     if args.tag_only_clusters:
         infer_config = f'{args.dropout}_clusters_prediction_only'
+
+    if args.monitor:
+        CUDA_DEVICE = torch.device('cpu')
 
     builder, tokenizer, model = load_pickles(args.model, args.builder, args.beam, config)
     if args.beam > 4:
